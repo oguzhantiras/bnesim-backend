@@ -67,14 +67,45 @@ async function getBnesimToken() {
 }
 
 // --- BNESIM login test ---
-app.get("/bnesim/login-test", async (req, res) => {
+app.get("/bnesim/products-test", async (req, res) => {
   try {
+    const area = req.query.area || "TR";
     const token = await getBnesimToken();
-    res.json({ ok: true, token: "***" }); // token'ı dışarıya dökmeyelim
+
+    const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-products`;
+    const form = new FormData();
+    form.append("area", area);
+
+    const r = await axios.post(url, form, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        ...form.getHeaders(),
+      },
+      timeout: 20000,
+      validateStatus: () => true,
+    });
+
+    if (r.status !== 200) {
+      return res.status(500).json({ ok: false, status: r.status, data: r.data });
+    }
+
+    const products = (r.data?.products || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      volumeMB: p.volume,
+      durationDays: p.duration,
+      region: p.region_names,
+      sku: p.sku,
+    }));
+
+    res.json({ ok: true, area, count: products.length, products });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 
 // --- MOCK: create eSIM (sonra gerçek endpoint ile değişecek) ---
 async function bnesimCreateEsim({ planCode, customerEmail }) {
