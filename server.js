@@ -197,19 +197,59 @@ async function bnesimGetSimcardDetail({ iccid, withProducts = 0 }) {
 // --- create + qr endpoint ---
 app.post("/create-and-qr", async (req, res) => {
   try {
-    const { planCode, customerEmail } = req.body || {};
-    if (!planCode) return res.status(400).json({ ok: false, error: "planCode gerekli" });
+    const { customerEmail } = req.body || {};
     if (!customerEmail) return res.status(400).json({ ok: false, error: "customerEmail gerekli" });
 
-    const esim = await bnesimCreateEsim({ planCode, customerEmail });
+    const productId = process.env.BNESIM_PRODUCT_ID;
+    if (!productId) return res.status(500).json({ ok: false, error: "BNESIM_PRODUCT_ID env yok" });
 
-    const qrPngDataUrl = await QRCode.toDataURL(esim.lpaString);
+    // 1) license oluştur
+    const licenseTx = await bnesimCreateLicense({
+      name: customerEmail,
+      email: customerEmail,
+    });
+
+    // 2) license status OK -> license_cli al
+    const licenseStatus = await waitForOkStatus(licenseTx);
+    const licenseCli = licenseStatus?.license_cli;
+    if (!licenseCli) throw new Error("license_cli gelmedi");
+
+    // 3) eSIM satın al/ata
+    const esimTx = await bnesimAddEsim({
+      licenseCli,
+      productId,
+    });
+
+    // 4) eSIM status OK (bu OK gelince genelde simcard iccid/cli vs çıkabilir, ama dokümanda yok)
+    const esimStatus = await waitForOkStatus(esimTx);
+
+    // ⚠️ Burada genelde iccid lazım. Bazı sistemler status response’a iccid ekler, bazısı eklemez.
+    // Eğer esimStatus içinde iccid varsa onu kullanacağız:
+    const iccid = esimStatus?.iccid || esimStatus?.simcard_iccid || null;
+
+    if (!iccid) {
+      // Şimdilik net alan adı dokümanda olmadığı için burada durduruyoruz:
+      return res.status(500).json({
+        ok: false,
+        error: "eSIM OK oldu ama iccid status içinde gelmedi. Status response içindeki iccid alanını bulmam lazım.",
+        esimStatus,
+      });
+    }
+
+    // 5) Simcard detail -> QR
+    const detail = await bnesimGetSimcardDetail({ iccid, withProducts: 0 });
+    const sim = detail?.data?.simcard_details;
+
+    const lpaString = sim?.qr_code || sim?.ios_universal_installation_link;
+    if (!lpaString) throw new Error("Simcard detail içinde qr_code/lpa yok");
+
+    const qrPngDataUrl = await QRCode.toDataURL(lpaString);
     const base64 = qrPngDataUrl.split(",")[1];
 
     res.json({
       ok: true,
-      iccid: esim.iccid,
-      lpaString: esim.lpaString,
+      iccid: sim?.iccid || iccid,
+      lpaString,
       qrPngBase64: base64,
     });
   } catch (e) {
