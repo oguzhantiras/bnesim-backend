@@ -80,6 +80,112 @@ app.get("/bnesim/login-test", async (req, res) => {
 async function bnesimCreateEsim({ planCode, customerEmail }) {
   // token alıyoruz (cache ile)
   await getBnesimToken();
+async function bnesimGetActivationStatus(activationTransaction) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/activation-transaction/get-status`;
+
+  const form = new FormData();
+  form.append("activationTransaction", String(activationTransaction));
+
+  const res = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status !== 200) throw new Error(`Get status failed: ${res.status}`);
+  return res.data; // { success, activation_status, license_cli? ...}
+}
+
+async function waitForOkStatus(activationTransaction, { tries = 8, delayMs = 1500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    const data = await bnesimGetActivationStatus(activationTransaction);
+    const status = data?.activation_status;
+
+    if (status === "OK") return data;
+    if (status === "FAILED") throw new Error(`Activation FAILED: ${JSON.stringify(data)}`);
+
+    // PENDING veya başka -> bekle
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error("Activation status OK olmadı (timeout/poll bitti)");
+}
+
+async function bnesimCreateLicense({ name, email, phone }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/license/activation`;
+
+  const form = new FormData();
+  form.append("name", name);
+  if (email) form.append("email", email);
+  if (phone) form.append("phonenumber", phone);
+
+  const res = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status !== 200) throw new Error(`License activation failed: ${res.status}`);
+  if (!res.data?.activationTransaction) throw new Error("activationTransaction yok (license)");
+
+  return res.data.activationTransaction;
+}
+
+async function bnesimAddEsim({ licenseCli, productId, scheduledActivationDate }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
+
+  const form = new FormData();
+  form.append("license_cli", String(licenseCli));
+  form.append("product_id", String(productId));
+  if (scheduledActivationDate) form.append("scheduled_activation_date", scheduledActivationDate);
+
+  const res = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status !== 200) throw new Error(`add-esim failed: ${res.status}`);
+  if (!res.data?.activationTransaction) throw new Error("activationTransaction yok (esim)");
+
+  return res.data.activationTransaction;
+}
+
+async function bnesimGetSimcardDetail({ iccid, withProducts = 0 }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/get-detail`;
+
+  const form = new FormData();
+  form.append("iccid", String(iccid));
+  form.append("with_products", String(withProducts));
+
+  const res = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (res.status !== 200) throw new Error(`Simcard detail failed: ${res.status}`);
+  return res.data;
+}
 
   // şimdilik MOCK
   return {
