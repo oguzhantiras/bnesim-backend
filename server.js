@@ -300,7 +300,7 @@ app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
 
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
 
-    const sim = detail?.data?.simcard_details || null;
+    const sim = detail?.simcardDetails || detail?.data?.simcardDetails || detail?.data?.simcard_details || null;
 
     res.json({
       ok: true,
@@ -312,6 +312,7 @@ app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
       smdp_address: sim?.smdp_address || null,
       ios_universal_installation_link: sim?.ios_universal_installation_link || null,
       matching_id: sim?.matching_id || null,
+  
       rawDetail: detail,
     });
   } catch (e) {
