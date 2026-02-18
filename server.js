@@ -105,6 +105,90 @@ app.get("/bnesim/products-test", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function bnesimLicenseActivation({ name, email, phonenumber }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/license/activation`;
+
+  const form = new FormData();
+  form.append("name", name);
+  if (email) form.append("email", email);
+  if (phonenumber) form.append("phonenumber", phonenumber);
+
+  const r = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) {
+    throw new Error(`license activation failed: ${r.status}`);
+  }
+  const tx = r.data?.activationTransaction;
+  if (!tx) throw new Error("activationTransaction gelmedi");
+  return tx;
+}
+
+async function bnesimActivationTxStatus(activationTransaction) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/activation-transaction/get-status`;
+
+  const form = new FormData();
+  form.append("activationTransaction", String(activationTransaction));
+
+  const r = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) {
+    throw new Error(`get-status failed: ${r.status}`);
+  }
+  return r.data;
+}
+
+// Browser’dan test kolay olsun diye GET yaptım
+app.get("/bnesim/license-test", async (req, res) => {
+  try {
+    const name = req.query.name || "Test User";
+    const email = req.query.email || "";
+    const phonenumber = req.query.phonenumber || "";
+
+    const activationTransaction = await bnesimLicenseActivation({ name, email, phonenumber });
+
+    // 6 kez dene (toplam ~12 sn)
+    let last = null;
+    for (let i = 0; i < 6; i++) {
+      last = await bnesimActivationTxStatus(activationTransaction);
+      const status = last?.activation_status;
+      if (status === "OK") break;
+      if (status === "FAILED") break;
+      await sleep(2000);
+    }
+
+    res.json({
+      ok: true,
+      activationTransaction,
+      activation_status: last?.activation_status || null,
+      license_cli: last?.license_cli || null,
+      raw: last,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 
 // --- MOCK: create eSIM (sonra gerçek endpoint ile değişecek) ---
