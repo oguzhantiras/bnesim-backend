@@ -438,63 +438,87 @@ async function bnesimGetSimcardDetail({ iccid, withProducts = 0 }) {
   };
 }
 
-// --- create + qr endpoint ---
 app.post("/create-and-qr", async (req, res) => {
   try {
-    const { customerEmail } = req.body || {};
-    if (!customerEmail) return res.status(400).json({ ok: false, error: "customerEmail gerekli" });
+    const { planCode, customerEmail, name } = req.body || {};
 
-    const productId = process.env.BNESIM_PRODUCT_ID;
-    if (!productId) return res.status(500).json({ ok: false, error: "BNESIM_PRODUCT_ID env yok" });
+    if (!planCode) return res.status(400).json({ ok: false, error: "planCode yok" });
+    if (!customerEmail) return res.status(400).json({ ok: false, error: "customerEmail yok" });
 
-    // 1) license oluştur
-    const licenseTx = await bnesimCreateLicense({
-      name: customerEmail,
+    // 1) license create
+    const tx1 = await bnesimLicenseActivation({
+      name: name || customerEmail,
       email: customerEmail,
+      phonenumber: "",
     });
 
-    // 2) license status OK -> license_cli al
-    const licenseStatus = await waitForOkStatus(licenseTx);
-    const licenseCli = licenseStatus?.license_cli;
-    if (!licenseCli) throw new Error("license_cli gelmedi");
+    let st1 = null;
+    for (let i = 0; i < 8; i++) {
+      st1 = await bnesimActivationTxStatus(tx1);
+      if (st1?.activation_status === "OK" || st1?.activation_status === "FAILED") break;
+      await sleep(1500);
+    }
+    if (st1?.activation_status !== "OK" || !st1?.license_cli) {
+      return res.status(500).json({ ok: false, step: "license", status: st1?.activation_status, raw: st1 });
+    }
 
-    // 3) eSIM satın al/ata
-    const esimTx = await bnesimAddEsim({
-      licenseCli,
-      productId,
+    const license_cli = st1.license_cli;
+
+    // 2) add esim (planCode şimdilik product_id)
+    const { tx: tx2 } = await bnesimAddEsim({
+      license_cli,
+      product_id: planCode,
     });
 
-    // 4) eSIM status OK (bu OK gelince genelde simcard iccid/cli vs çıkabilir, ama dokümanda yok)
-    const esimStatus = await waitForOkStatus(esimTx);
+    let st2 = null;
+    for (let i = 0; i < 12; i++) {
+      st2 = await bnesimActivationTxStatus(tx2);
+      if (st2?.activation_status === "OK" || st2?.activation_status === "FAILED") break;
+      await sleep(1500);
+    }
+    if (st2?.activation_status !== "OK") {
+      return res.status(500).json({ ok: false, step: "add-esim", status: st2?.activation_status, raw: st2 });
+    }
 
-    // ⚠️ Burada genelde iccid lazım. Bazı sistemler status response’a iccid ekler, bazısı eklemez.
-    // Eğer esimStatus içinde iccid varsa onu kullanacağız:
-    const iccid = esimStatus?.iccid || esimStatus?.simcard_iccid || null;
+    // 3) iccid'yi status'tan almaya çalış; yoksa fallback: simcard detail için status response'ta arar
+    const iccid =
+      st2?.iccid ||
+      st2?.simcard_iccid ||
+      st2?.simcard_details?.iccid ||
+      null;
 
     if (!iccid) {
-      // Şimdilik net alan adı dokümanda olmadığı için burada durduruyoruz:
       return res.status(500).json({
         ok: false,
-        error: "eSIM OK oldu ama iccid status içinde gelmedi. Status response içindeki iccid alanını bulmam lazım.",
-        esimStatus,
+        step: "iccid",
+        error: "Status OK ama ICCID yok (bu hesapta farklı olabilir)",
+        raw: st2,
       });
     }
 
-    // 5) Simcard detail -> QR
-    const detail = await bnesimGetSimcardDetail({ iccid, withProducts: 0 });
-    const sim = detail?.data?.simcard_details;
+    // 4) simcard detail
+    const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
+    const sim =
+      detail?.data?.simcard_details ||
+      detail?.simcardDetails ||
+      detail?.data?.simcardDetails ||
+      null;
 
-    const lpaString = sim?.qr_code || sim?.ios_universal_installation_link;
-    if (!lpaString) throw new Error("Simcard detail içinde qr_code/lpa yok");
+    if (!sim) throw new Error("simcard detail parse edilemedi");
 
-    const qrPngDataUrl = await QRCode.toDataURL(lpaString);
-    const base64 = qrPngDataUrl.split(",")[1];
-
-    res.json({
+    // QR için: qr_code_image URL var. Biz ayrıca base64 QR üretmek istersek:
+    // QRCode.toDataURL(sim.ios_universal_installation_link) gibi de yapılabilir.
+    // Şimdilik BNESIM'in PNG linkini döndürelim (en hızlı MVP).
+    return res.json({
       ok: true,
-      iccid: sim?.iccid || iccid,
-      lpaString,
-      qrPngBase64: base64,
+      customerEmail,
+      product_id: planCode,
+      license_cli,
+      iccid,
+      qr_code_image: sim.qr_code_image || null,
+      ios_universal_installation_link: sim.ios_universal_installation_link || null,
+      matching_id: sim.matching_id || null,
+      smdp_address: sim.smdp_address || null,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
