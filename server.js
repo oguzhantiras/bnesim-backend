@@ -238,6 +238,86 @@ app.get("/bnesim/add-esim-test", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/get-detail`;
+
+  const form = new FormData();
+  form.append("iccid", String(iccid));
+  form.append("with_products", String(with_products));
+
+  const r = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) throw new Error(`simcard detail failed: ${r.status}`);
+  return r.data;
+}
+
+// 1) activationTransaction -> status OK olunca license_cli + (çoğu hesapta) iccid gibi bilgi döner
+// 2) iccid ile simcard detail çekip QR datasını alır
+app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
+  try {
+    const activationTransaction = req.query.activationTransaction;
+    if (!activationTransaction)
+      return res.status(400).json({ ok: false, error: "activationTransaction query yok" });
+
+    // OK olana kadar dene (max ~20 sn)
+    let last = null;
+    for (let i = 0; i < 10; i++) {
+      last = await bnesimActivationTxStatus(activationTransaction);
+      const status = last?.activation_status;
+      if (status === "OK" || status === "FAILED") break;
+      await sleep(2000);
+    }
+
+    if (!last) throw new Error("status gelmedi");
+    if (last.activation_status !== "OK") {
+      return res.json({ ok: false, activation_status: last.activation_status, rawStatus: last });
+    }
+
+    // BNESIM bazı hesaplarda burada direkt iccid verir, bazıları vermez.
+    const iccid =
+      last.iccid ||
+      last.simcard_iccid ||
+      last.simcard_details?.iccid ||
+      null;
+
+    if (!iccid) {
+      return res.json({
+        ok: false,
+        activation_status: "OK",
+        error: "Status OK ama ICCID bu response içinde yok (hesap farklı olabilir). rawStatus'a bak.",
+        rawStatus: last,
+      });
+    }
+
+    const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
+
+    const sim = detail?.data?.simcard_details || null;
+
+    res.json({
+      ok: true,
+      activationTransaction,
+      iccid,
+      // QR için işe yarayan alanlar (hangisi doluysa onu kullanacağız)
+      qr_code: sim?.qr_code || null,
+      qr_code_image: sim?.qr_code_image || null,
+      smdp_address: sim?.smdp_address || null,
+      ios_universal_installation_link: sim?.ios_universal_installation_link || null,
+      matching_id: sim?.matching_id || null,
+      rawDetail: detail,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 
 // --- MOCK: create eSIM (sonra gerçek endpoint ile değişecek) ---
