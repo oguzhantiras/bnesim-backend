@@ -189,6 +189,55 @@ app.get("/bnesim/license-test", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+async function bnesimAddEsim({ license_cli, product_id }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
+
+  const form = new FormData();
+  form.append("license_cli", String(license_cli));
+  form.append("product_id", String(product_id));
+
+  const r = await axios.post(url, form, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) {
+    throw new Error(`add-esim failed: ${r.status}`);
+  }
+
+  const tx = r.data?.activationTransaction;
+  if (!tx) throw new Error("add-esim activationTransaction gelmedi");
+  return { tx, raw: r.data };
+}
+
+// Browser’dan test kolay olsun diye GET
+app.get("/bnesim/add-esim-test", async (req, res) => {
+  try {
+    const license_cli = req.query.license_cli;
+    const product_id = req.query.product_id;
+
+    if (!license_cli) return res.status(400).json({ ok: false, error: "license_cli query yok" });
+    if (!product_id) return res.status(400).json({ ok: false, error: "product_id query yok" });
+
+    const out = await bnesimAddEsim({ license_cli, product_id });
+
+    res.json({
+      ok: true,
+      license_cli,
+      product_id,
+      activationTransaction: out.tx,
+      raw: out.raw,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 
 // --- MOCK: create eSIM (sonra gerçek endpoint ile değişecek) ---
