@@ -215,7 +215,49 @@ async function bnesimAddEsim({ license_cli, product_id }) {
   if (!tx) throw new Error("add-esim activationTransaction gelmedi");
   return { tx, raw: r.data };
 }
+app.get("/api/products", async (req, res) => {
+  try {
+    const area = (req.query.area || "TR").toString().toUpperCase();
+    const token = await getBnesimToken(); // sende var
 
+    const form = new FormData();
+    form.append("area", area);
+
+    const r = await axios.post(
+      `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-products`,
+      form,
+      {
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+          ...form.getHeaders(),
+        },
+        timeout: 20000,
+        validateStatus: () => true,
+      }
+    );
+
+    if (r.status !== 200 || !r.data?.success) {
+      return res.status(500).json({ ok: false, error: "BNESIM products failed", raw: r.data });
+    }
+
+    const products = (r.data.products || []).map((p) => ({
+      id: String(p.id),
+      name: p.name,
+      price: Number(p.price),
+      currency: p.currency || "EUR",
+      volumeMB: Number(p.volume),
+      durationDays: Number(p.duration),
+      region: p.region_names || p.region || "",
+      sku: p.sku || "",
+      validity_label: p.validity_label || "",
+    }));
+
+    res.json({ ok: true, area, count: products.length, products });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // Browser’dan test kolay olsun diye GET
 app.get("/bnesim/add-esim-test", async (req, res) => {
   try {
