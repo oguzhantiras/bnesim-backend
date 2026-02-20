@@ -7,7 +7,14 @@ const FormData = require("form-data");
 
 const app = express();
 app.use(express.json());
-
+// --- CORS (Shopify / browser için şart) ---////////////////////////////
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*"); // istersen sonra domain'e kısıtlarız
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
