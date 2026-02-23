@@ -2,24 +2,27 @@ require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
-const QRCode = require("qrcode");
 const FormData = require("form-data");
 
 const app = express();
 app.use(express.json());
-// --- CORS (Shopify / browser için şart) ---////////////////////////////
+
+// --- CORS (şimdilik açık; canlıda domain ile kısıtla) ---
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*"); // istersen sonra domain'e kısıtlarız
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// --- BNESIM token cache ---
+// =====================
+// BNESIM TOKEN CACHE
+// =====================
 let BNESIM_TOKEN_CACHE = { token: null, expMs: 0 };
 
 function decodeJwtExpMs(token) {
@@ -52,12 +55,9 @@ async function bnesimLoginOperator() {
     validateStatus: () => true,
   });
 
-  if (res.status !== 200) {
-    throw new Error(`BNESIM login failed: ${res.status}`);
-  }
-  if (!res.data?.token) {
-    throw new Error("BNESIM token yok");
-  }
+  if (res.status !== 200) throw new Error(`BNESIM login failed: ${res.status}`);
+  if (!res.data?.token) throw new Error("BNESIM token yok");
+
   return res.data.token;
 }
 
@@ -73,80 +73,42 @@ async function getBnesimToken() {
   return token;
 }
 
-// --- BNESIM regions & countries ---
-app.get("/bnesim/regions-countries", async (req, res) => {
-  try {
-    const token = await getBnesimToken();
-
-    const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-regions-countries`;
-
-    const r = await axios.get(url, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
-      timeout: 20000,
-      validateStatus: () => true,
-    });
-
-    if (r.status !== 200) {
-      return res.status(500).json({ ok: false, status: r.status, data: r.data });
-    }
-
-    const areas = r.data?.areas || [];
-    const cleaned = areas
-      .map((a) => ({
-        name: a.country_name,
-        code: a.country_iso2,
-      }))
-      .filter((x) => x.name && x.code);
-
-    res.json({ ok: true, count: cleaned.length, areas: cleaned });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-// --- BNESIM login test ---
-app.get("/bnesim/products-test", async (req, res) => {
-  try {
-    const area = req.query.area || "TR";
-    const token = await getBnesimToken();
-
-    const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-products`;
-    const form = new FormData();
-    form.append("area", area);
-
-    const r = await axios.post(url, form, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-        ...form.getHeaders(),
-      },
-      timeout: 20000,
-      validateStatus: () => true,
-    });
-
-    if (r.status !== 200) {
-      return res.status(500).json({ ok: false, status: r.status, data: r.data });
-    }
-
-    const products = (r.data?.products || []).map((p) => ({
-      id: p.id,
-      name: p.name,
-      price: p.price,
-      volumeMB: p.volume,
-      durationDays: p.duration,
-      region: p.region_names,
-      sku: p.sku,
-    }));
-
-    res.json({ ok: true, area, count: products.length, products });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// =====================
+// BNESIM API HELPERS
+// =====================
+async function bnesimGetRegionsCountries() {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-regions-countries`;
+
+  const r = await axios.get(url, {
+    headers: { accept: "application/json", authorization: `Bearer ${token}` },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) throw new Error(`regions-countries failed: ${r.status}`);
+  return r.data;
+}
+
+async function bnesimGetProducts(area) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-products`;
+
+  const form = new FormData();
+  if (area) form.append("area", area);
+
+  const r = await axios.post(url, form, {
+    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    timeout: 20000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) throw new Error(`get-products failed: ${r.status}`);
+  return r.data;
 }
 
 async function bnesimLicenseActivation({ name, email, phonenumber }) {
@@ -159,20 +121,14 @@ async function bnesimLicenseActivation({ name, email, phonenumber }) {
   if (phonenumber) form.append("phonenumber", phonenumber);
 
   const r = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
+    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    timeout: 30000,
     validateStatus: () => true,
   });
 
-  if (r.status !== 200) {
-    throw new Error(`license activation failed: ${r.status}`);
-  }
+  if (r.status !== 200) throw new Error(`license activation failed: ${r.status}`);
   const tx = r.data?.activationTransaction;
-  if (!tx) throw new Error("activationTransaction gelmedi");
+  if (!tx) throw new Error("activationTransaction gelmedi (license)");
   return tx;
 }
 
@@ -184,22 +140,98 @@ async function bnesimActivationTxStatus(activationTransaction) {
   form.append("activationTransaction", String(activationTransaction));
 
   const r = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
+    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
     timeout: 20000,
     validateStatus: () => true,
   });
 
-  if (r.status !== 200) {
-    throw new Error(`get-status failed: ${r.status}`);
-  }
+  if (r.status !== 200) throw new Error(`get-status failed: ${r.status}`);
+  return r.data; // { success, activation_status, license_cli?, ... }
+}
+
+async function bnesimAddEsim({ license_cli, product_id }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
+
+  const form = new FormData();
+  form.append("license_cli", String(license_cli));
+  form.append("product_id", String(product_id));
+
+  const r = await axios.post(url, form, {
+    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) throw new Error(`add-esim failed: ${r.status}`);
+  const tx = r.data?.activationTransaction;
+  if (!tx) throw new Error("activationTransaction gelmedi (add-esim)");
+  return { tx, raw: r.data };
+}
+
+async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
+  const token = await getBnesimToken();
+  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/get-detail`;
+
+  const form = new FormData();
+  form.append("iccid", String(iccid));
+  form.append("with_products", String(with_products));
+
+  const r = await axios.post(url, form, {
+    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (r.status !== 200) throw new Error(`simcard detail failed: ${r.status}`);
   return r.data;
 }
 
-// Browser’dan test kolay olsun diye GET yaptım
+// =====================
+// ROUTES
+// =====================
+
+// Regions/Countries (frontend bunu kullanıyor)
+app.get("/bnesim/regions-countries", async (req, res) => {
+  try {
+    const raw = await bnesimGetRegionsCountries();
+
+    const areas = raw?.areas || [];
+    const cleaned = areas
+      .map((a) => ({ name: a.country_name, code: a.country_iso2 }))
+      .filter((x) => x.name && x.code);
+
+    res.json({ ok: true, count: cleaned.length, areas: cleaned });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Products (area paramıyla)
+app.get("/bnesim/products", async (req, res) => {
+  try {
+    const area = (req.query.area || "TR").toString();
+
+    const raw = await bnesimGetProducts(area);
+    const products = (raw?.products || []).map((p) => ({
+      id: String(p.id),
+      name: p.name,
+      price: Number(p.price),
+      currency: p.currency || "EUR",
+      volumeMB: Number(p.volume),
+      durationDays: Number(p.duration),
+      region: p.region_names || "",
+      sku: p.sku || "",
+      validity_label: p.validity_label || "",
+    }));
+
+    res.json({ ok: true, area, count: products.length, products });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// License test (GET)
 app.get("/bnesim/license-test", async (req, res) => {
   try {
     const name = req.query.name || "Test User";
@@ -208,14 +240,12 @@ app.get("/bnesim/license-test", async (req, res) => {
 
     const activationTransaction = await bnesimLicenseActivation({ name, email, phonenumber });
 
-    // 6 kez dene (toplam ~12 sn)
     let last = null;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       last = await bnesimActivationTxStatus(activationTransaction);
-      const status = last?.activation_status;
-      if (status === "OK") break;
-      if (status === "FAILED") break;
-      await sleep(2000);
+      const st = last?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
+      await sleep(1500);
     }
 
     res.json({
@@ -229,134 +259,21 @@ app.get("/bnesim/license-test", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-async function bnesimAddEsim({ license_cli, product_id }) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
 
-  const form = new FormData();
-  form.append("license_cli", String(license_cli));
-  form.append("product_id", String(product_id));
-
-  const r = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 30000,
-    validateStatus: () => true,
-  });
-
-  if (r.status !== 200) {
-    throw new Error(`add-esim failed: ${r.status}`);
-  }
-
-  const tx = r.data?.activationTransaction;
-  if (!tx) throw new Error("add-esim activationTransaction gelmedi");
-  return { tx, raw: r.data };
-}
-app.get("/api/products", async (req, res) => {
-  try {
-    const area = (req.query.area || "TR").toString().toUpperCase();
-    const token = await getBnesimToken(); // sende var
-
-    const form = new FormData();
-    form.append("area", area);
-
-    const r = await axios.post(
-      `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-products`,
-      form,
-      {
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-          ...form.getHeaders(),
-        },
-        timeout: 20000,
-        validateStatus: () => true,
-      }
-    );
-
-    if (r.status !== 200 || !r.data?.success) {
-      return res.status(500).json({ ok: false, error: "BNESIM products failed", raw: r.data });
-    }
-
-    const products = (r.data.products || []).map((p) => ({
-      id: String(p.id),
-      name: p.name,
-      price: Number(p.price),
-      currency: p.currency || "EUR",
-      volumeMB: Number(p.volume),
-      durationDays: Number(p.duration),
-      region: p.region_names || p.region || "",
-      sku: p.sku || "",
-      validity_label: p.validity_label || "",
-    }));
-
-    res.json({ ok: true, area, count: products.length, products });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-// Browser’dan test kolay olsun diye GET
-app.get("/bnesim/add-esim-test", async (req, res) => {
-  try {
-    const license_cli = req.query.license_cli;
-    const product_id = req.query.product_id;
-
-    if (!license_cli) return res.status(400).json({ ok: false, error: "license_cli query yok" });
-    if (!product_id) return res.status(400).json({ ok: false, error: "product_id query yok" });
-
-    const out = await bnesimAddEsim({ license_cli, product_id });
-
-    res.json({
-      ok: true,
-      license_cli,
-      product_id,
-      activationTransaction: out.tx,
-      raw: out.raw,
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/get-detail`;
-
-  const form = new FormData();
-  form.append("iccid", String(iccid));
-  form.append("with_products", String(with_products));
-
-  const r = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 30000,
-    validateStatus: () => true,
-  });
-
-  if (r.status !== 200) throw new Error(`simcard detail failed: ${r.status}`);
-  return r.data;
-}
-
-// 1) activationTransaction -> status OK olunca license_cli + (çoğu hesapta) iccid gibi bilgi döner
-// 2) iccid ile simcard detail çekip QR datasını alır
+// eSIM detail from tx (GET)
 app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
   try {
     const activationTransaction = req.query.activationTransaction;
-    if (!activationTransaction)
+    if (!activationTransaction) {
       return res.status(400).json({ ok: false, error: "activationTransaction query yok" });
+    }
 
-    // OK olana kadar dene (max ~20 sn)
     let last = null;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       last = await bnesimActivationTxStatus(activationTransaction);
-      const status = last?.activation_status;
-      if (status === "OK" || status === "FAILED") break;
-      await sleep(2000);
+      const st = last?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
+      await sleep(1500);
     }
 
     if (!last) throw new Error("status gelmedi");
@@ -364,7 +281,6 @@ app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
       return res.json({ ok: false, activation_status: last.activation_status, rawStatus: last });
     }
 
-    // BNESIM bazı hesaplarda burada direkt iccid verir, bazıları vermez.
     const iccid =
       last.iccid ||
       last.simcard_iccid ||
@@ -375,26 +291,27 @@ app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
       return res.json({
         ok: false,
         activation_status: "OK",
-        error: "Status OK ama ICCID bu response içinde yok (hesap farklı olabilir). rawStatus'a bak.",
+        error: "Status OK ama ICCID yok. rawStatus'a bak.",
         rawStatus: last,
       });
     }
 
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-
-    const sim = detail?.simcardDetails || detail?.data?.simcardDetails || detail?.data?.simcard_details || null;
+    const sim =
+      detail?.simcardDetails ||
+      detail?.data?.simcardDetails ||
+      detail?.data?.simcard_details ||
+      null;
 
     res.json({
       ok: true,
       activationTransaction,
       iccid,
-      // QR için işe yarayan alanlar (hangisi doluysa onu kullanacağız)
       qr_code: sim?.qr_code || null,
       qr_code_image: sim?.qr_code_image || null,
       smdp_address: sim?.smdp_address || null,
       ios_universal_installation_link: sim?.ios_universal_installation_link || null,
       matching_id: sim?.matching_id || null,
-  
       rawDetail: detail,
     });
   } catch (e) {
@@ -402,163 +319,29 @@ app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
   }
 });
 
-
-// --- MOCK: create eSIM (sonra gerçek endpoint ile değişecek) ---
-async function bnesimCreateEsim({ planCode, customerEmail }) {
-  // token alıyoruz (cache ile)
-  await getBnesimToken();
-async function bnesimGetActivationStatus(activationTransaction) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/activation-transaction/get-status`;
-
-  const form = new FormData();
-  form.append("activationTransaction", String(activationTransaction));
-
-  const res = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
-    validateStatus: () => true,
-  });
-
-  if (res.status !== 200) throw new Error(`Get status failed: ${res.status}`);
-  return res.data; // { success, activation_status, license_cli? ...}
-}
-
-async function waitForOkStatus(activationTransaction, { tries = 8, delayMs = 1500 } = {}) {
-  for (let i = 0; i < tries; i++) {
-    const data = await bnesimGetActivationStatus(activationTransaction);
-    const status = data?.activation_status;
-
-    if (status === "OK") return data;
-    if (status === "FAILED") throw new Error(`Activation FAILED: ${JSON.stringify(data)}`);
-
-    // PENDING veya başka -> bekle
-    await new Promise((r) => setTimeout(r, delayMs));
-  }
-  throw new Error("Activation status OK olmadı (timeout/poll bitti)");
-}
-
-async function bnesimCreateLicense({ name, email, phone }) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/license/activation`;
-
-  const form = new FormData();
-  form.append("name", name);
-  if (email) form.append("email", email);
-  if (phone) form.append("phonenumber", phone);
-
-  const res = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
-    validateStatus: () => true,
-  });
-
-  if (res.status !== 200) throw new Error(`License activation failed: ${res.status}`);
-  if (!res.data?.activationTransaction) throw new Error("activationTransaction yok (license)");
-
-  return res.data.activationTransaction;
-}
-
-async function bnesimAddEsim({ licenseCli, productId, scheduledActivationDate }) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
-
-  const form = new FormData();
-  form.append("license_cli", String(licenseCli));
-  form.append("product_id", String(productId));
-  if (scheduledActivationDate) form.append("scheduled_activation_date", scheduledActivationDate);
-
-  const res = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
-    validateStatus: () => true,
-  });
-
-  if (res.status !== 200) throw new Error(`add-esim failed: ${res.status}`);
-  if (!res.data?.activationTransaction) throw new Error("activationTransaction yok (esim)");
-
-  return res.data.activationTransaction;
-}
-
-async function bnesimGetSimcardDetail({ iccid, withProducts = 0 }) {
-  const token = await getBnesimToken();
-  const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/get-detail`;
-
-  const form = new FormData();
-  form.append("iccid", String(iccid));
-  form.append("with_products", String(withProducts));
-
-  const res = await axios.post(url, form, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
-    validateStatus: () => true,
-  });
-
-  if (res.status !== 200) throw new Error(`Simcard detail failed: ${res.status}`);
-  return res.data;
-}
-
-  // şimdilik MOCK
-  return {
-    lpaString: "LPA:1$SMDP.EXAMPLE.COM$ACTIVATIONCODE-EXAMPLE",
-    iccid: "8988xxxxxxxxxxxxxxx",
-  };
-}
-
+// Tek endpoint: License + eSIM + Detail (POST)  ✅ senin asıl işin
 app.post("/create-and-qr", async (req, res) => {
   try {
     const { product_id, customerEmail, name, phone } = req.body || {};
-
     if (!product_id) return res.status(400).json({ ok: false, error: "product_id yok" });
     if (!customerEmail) return res.status(400).json({ ok: false, error: "customerEmail yok" });
 
     // 1) License activation
-    const token = await getBnesimToken();
-    const url1 = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/license/activation`;
-
-    const form1 = new FormData();
-    form1.append("name", name || customerEmail);
-    form1.append("email", customerEmail);
-    if (phone) form1.append("phonenumber", phone);
-
-    const r1 = await axios.post(url1, form1, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-        ...form1.getHeaders(),
-      },
-      timeout: 30000,
-      validateStatus: () => true,
+    const licenseTx = await bnesimLicenseActivation({
+      name: name || customerEmail,
+      email: customerEmail,
+      phonenumber: phone || "",
     });
-    if (r1.status !== 200 || !r1.data?.activationTransaction) {
-      throw new Error(`license activation failed: ${r1.status}`);
-    }
 
-    const licenseTx = r1.data.activationTransaction;
-
-    // 2) Tx status -> license_cli
+    // 2) License status -> license_cli
     let st1 = null;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       st1 = await bnesimActivationTxStatus(licenseTx);
-      if (st1?.activation_status === "OK" || st1?.activation_status === "FAILED") break;
+      const st = st1?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
       await sleep(1500);
     }
+
     if (st1?.activation_status !== "OK" || !st1?.license_cli) {
       return res.status(500).json({ ok: false, step: "license_status", raw: st1 });
     }
@@ -566,38 +349,24 @@ app.post("/create-and-qr", async (req, res) => {
     const license_cli = st1.license_cli;
 
     // 3) Add eSIM
-    const url2 = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/simcard/add-esim`;
-    const form2 = new FormData();
-    form2.append("license_cli", String(license_cli));
-    form2.append("product_id", String(product_id));
-
-    const r2 = await axios.post(url2, form2, {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-        ...form2.getHeaders(),
-      },
-      timeout: 30000,
-      validateStatus: () => true,
+    const { tx: esimTx, raw: esimRaw } = await bnesimAddEsim({
+      license_cli,
+      product_id,
     });
-    if (r2.status !== 200 || !r2.data?.activationTransaction) {
-      throw new Error(`add-esim failed: ${r2.status}`);
-    }
 
-    const esimTx = r2.data.activationTransaction;
-
-    // 4) Tx status -> OK
+    // 4) eSIM status -> OK
     let st2 = null;
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 16; i++) {
       st2 = await bnesimActivationTxStatus(esimTx);
-      if (st2?.activation_status === "OK" || st2?.activation_status === "FAILED") break;
+      const st = st2?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
       await sleep(1500);
     }
+
     if (st2?.activation_status !== "OK") {
-      return res.status(500).json({ ok: false, step: "esim_status", raw: st2 });
+      return res.status(500).json({ ok: false, step: "esim_status", raw: st2, esimRaw });
     }
 
-    // iccid
     const iccid =
       st2?.iccid ||
       st2?.simcard_iccid ||
@@ -605,7 +374,7 @@ app.post("/create-and-qr", async (req, res) => {
       null;
 
     if (!iccid) {
-      return res.status(500).json({ ok: false, step: "iccid", error: "ICCID yok", raw: st2 });
+      return res.status(500).json({ ok: false, step: "iccid", error: "ICCID yok", raw: st2, esimRaw });
     }
 
     // 5) Simcard detail
@@ -623,7 +392,8 @@ app.post("/create-and-qr", async (req, res) => {
       customerEmail,
       product_id,
       license_cli,
-      activationTransaction: esimTx,
+      licenseActivationTransaction: licenseTx,
+      esimActivationTransaction: esimTx,
       iccid,
       qr_code: sim.qr_code || null,
       qr_code_image: sim.qr_code_image || null,
@@ -636,8 +406,6 @@ app.post("/create-and-qr", async (req, res) => {
   }
 });
 
-
 // --- start ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server listening on ${port}`));
-
