@@ -455,7 +455,118 @@ app.post("/create-and-qr", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ===============================
+// SHOPIFY - ORDER PAID WEBHOOK
+// ===============================
+app.post("/webhooks/order-paid", async (req, res) => {
+  try {
+    const order = req.body;
 
+    console.log("✅ ORDER PAID WEBHOOK GELDİ");
+    console.log("Order ID:", order.id);
+    console.log("Email:", order.email);
+
+    // 1) Güvenlik için hemen 200 dön
+    res.sendStatus(200);
+
+    // 2) Gerekli alanları çek
+    const customerEmail = order.email;
+    if (!customerEmail) {
+      console.error("❌ Email yok");
+      return;
+    }
+
+    // 3) İlk ürünü al (şimdilik 1 eSIM varsayıyoruz)
+    const item = order.line_items?.[0];
+    if (!item) {
+      console.error("❌ line_items boş");
+      return;
+    }
+
+    const priceKey = item.variant_title || item.price; 
+    console.log("Paket fiyat anahtarı:", priceKey);
+
+    /**
+     * 🔑 ÖNEMLİ:
+     * priceKey (örnek: "24.99") → BNESIM product_id map’i
+     */
+    const PRICE_TO_PRODUCT = {
+      "24.99": "86744",
+      "149.99": "86745"
+    };
+
+    const product_id = PRICE_TO_PRODUCT[priceKey];
+    if (!product_id) {
+      console.error("❌ Bu fiyata karşılık product_id yok:", priceKey);
+      return;
+    }
+
+    // ===============================
+    // BNESIM FLOW
+    // ===============================
+
+    // A) License oluştur
+    const licenseTx = await bnesimLicenseActivation({
+      name: customerEmail,
+      email: customerEmail
+    });
+
+    // B) License status → OK
+    let licenseStatus;
+    for (let i = 0; i < 10; i++) {
+      licenseStatus = await bnesimActivationTxStatus(licenseTx);
+      if (licenseStatus?.activation_status === "OK") break;
+      await sleep(1500);
+    }
+
+    if (!licenseStatus?.license_cli) {
+      console.error("❌ license_cli alınamadı");
+      return;
+    }
+
+    const license_cli = licenseStatus.license_cli;
+
+    // C) eSIM ekle
+    const esim = await bnesimAddEsim({
+      license_cli,
+      product_id
+    });
+
+    // D) eSIM status
+    let esimStatus;
+    for (let i = 0; i < 10; i++) {
+      esimStatus = await bnesimActivationTxStatus(esim.tx);
+      if (esimStatus?.activation_status === "OK") break;
+      await sleep(1500);
+    }
+
+    if (!esimStatus?.iccid && !esimStatus?.simcard_iccid) {
+      console.error("❌ ICCID bulunamadı");
+      return;
+    }
+
+    const iccid =
+      esimStatus.iccid ||
+      esimStatus.simcard_iccid ||
+      esimStatus.simcard_details?.iccid;
+
+    // E) Simcard detail → QR
+    const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
+    const sim =
+      detail?.data?.simcard_details ||
+      detail?.simcardDetails;
+
+    console.log("🎉 eSIM OLUŞTU");
+    console.log("ICCID:", iccid);
+    console.log("QR:", sim?.qr_code || sim?.qr_code_image);
+
+    // 🔜 BURADA MAIL ATACAĞIZ (bir sonraki adım)
+  } catch (err) {
+    console.error("❌ WEBHOOK ERROR:", err.message);
+    // Shopify tekrar denemesin diye yine 200 dönüyoruz
+    res.sendStatus(200);
+  }
+});
 // --- start ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server listening on ${port}`));
