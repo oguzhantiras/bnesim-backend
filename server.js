@@ -73,6 +73,39 @@ async function getBnesimToken() {
   return token;
 }
 
+// --- BNESIM regions & countries ---
+app.get("/bnesim/regions-countries", async (req, res) => {
+  try {
+    const token = await getBnesimToken();
+
+    const url = `${process.env.BNESIM_BASE_URL}/v2.0/enterprise/products/get-regions-countries`;
+
+    const r = await axios.get(url, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      timeout: 20000,
+      validateStatus: () => true,
+    });
+
+    if (r.status !== 200) {
+      return res.status(500).json({ ok: false, status: r.status, data: r.data });
+    }
+
+    const areas = r.data?.areas || [];
+    const cleaned = areas
+      .map((a) => ({
+        name: a.country_name,
+        code: a.country_iso2,
+      }))
+      .filter((x) => x.name && x.code);
+
+    res.json({ ok: true, count: cleaned.length, areas: cleaned });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // --- BNESIM login test ---
 app.get("/bnesim/products-test", async (req, res) => {
   try {
