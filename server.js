@@ -190,15 +190,65 @@ async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
 // =====================
 // ROUTES
 // =====================
+async function getProductsNormalized(area) {
+  const raw = await bnesimGetProducts(area);
+  const products = (raw?.products || []).map((p) => ({
+    id: String(p.id),
+    name: p.name,
+    price: Number(p.price),
+    currency: p.currency || "EUR",
+    volumeMB: Number(p.volume),
+    durationDays: Number(p.duration),
+    region: p.region_names || p.region || "",
+    sku: p.sku || "",
+    validity_label: p.validity_label || "",
+  }));
+  return { raw, products };
+}
 
-// Regions/Countries (frontend bunu kullanıyor)
+// ✅ Senin frontend'in kullandığı eski endpoint
+app.get("/bnesim/products-test", async (req, res) => {
+  try {
+    const area = (req.query.area || "TR").toString();
+    const { products } = await getProductsNormalized(area);
+    res.json({ ok: true, area, count: products.length, products });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ✅ Eğer bir yerlerde bunu da çağırıyorsan (eski kodunda vardı)
+app.get("/api/products", async (req, res) => {
+  try {
+    const area = (req.query.area || "TR").toString().toUpperCase();
+    const { products } = await getProductsNormalized(area);
+    res.json({ ok: true, area, count: products.length, products });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ✅ Yeni isim (istersen kullanırsın)
+app.get("/bnesim/products", async (req, res) => {
+  try {
+    const area = (req.query.area || "TR").toString();
+    const { products } = await getProductsNormalized(area);
+    res.json({ ok: true, area, count: products.length, products });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.get("/bnesim/regions-countries", async (req, res) => {
   try {
     const raw = await bnesimGetRegionsCountries();
 
     const areas = raw?.areas || [];
+    // Hem region hem country için güvenli map:
     const cleaned = areas
-      .map((a) => ({ name: a.country_name, code: a.country_iso2 }))
+      .map((a) => ({
+        name: a.country_name || a.name || a.region_name || a.region || "",
+        code: a.country_iso2 || a.code || a.countryCode || "",
+      }))
       .filter((x) => x.name && x.code);
 
     res.json({ ok: true, count: cleaned.length, areas: cleaned });
