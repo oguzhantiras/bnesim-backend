@@ -385,21 +385,57 @@ app.post("/webhooks/order-paid", async (req, res) => {
     const customerEmail = order?.email;
     if (!customerEmail) return console.error("❌ Email yok");
 
-    const item = order?.line_items?.[0];
-    if (!item) return console.error("❌ line_items boş");
+    // ✅ line_items kontrol
+    const items = Array.isArray(order?.line_items) ? order.line_items : [];
+    if (!items.length) return console.error("❌ line_items boş");
 
-    // ✅ Sepete eklerken gönderdiğin BNESIM Product buradan gelir
-    const props = item?.properties || {};
+    // ✅ Shopify properties bazen array [{name,value}] geliyor — onu okuyalım
+    function getPropValue(properties, key) {
+      if (!properties) return "";
+
+      // nadiren object döner
+      if (!Array.isArray(properties) && typeof properties === "object") {
+        return String(properties[key] || "").trim();
+      }
+
+      // genelde array döner
+      if (Array.isArray(properties)) {
+        const found = properties.find((p) => String(p?.name).trim() === key);
+        return String(found?.value || "").trim();
+      }
+
+      return "";
+    }
+
+    // ✅ BNESIM Product property’si olan line item’i seç (yoksa ilkini al)
+    const item =
+      items.find((li) => {
+        const props = li?.properties;
+        const v =
+          getPropValue(props, "BNESIM Product") ||
+          getPropValue(props, "BNESIM Product ID") ||
+          getPropValue(props, "BNESIM_PRODUCT_ID") ||
+          getPropValue(props, "_bnesim_product_id");
+        return Boolean(v);
+      }) || items[0];
+
+    const props = item?.properties || [];
+
     const product_id =
-      props["BNESIM Product"] ||
-      props["BNESIM Product ID"] ||
-      props["BNESIM_PRODUCT_ID"] ||
+      getPropValue(props, "BNESIM Product") ||
+      getPropValue(props, "BNESIM Product ID") ||
+      getPropValue(props, "BNESIM_PRODUCT_ID") ||
+      getPropValue(props, "_bnesim_product_id") ||
       "";
 
-    const title = props["Paket"] || item?.title || item?.name || "";
+    const title =
+      getPropValue(props, "Paket") ||
+      item?.title ||
+      item?.name ||
+      "";
 
     if (!product_id) {
-      console.error("❌ BNESIM product_id yok. line_item.properties içinde BNESIM Product olmalı.", props);
+      console.error("❌ BNESIM product_id yok. properties:", props);
       return;
     }
 
@@ -465,8 +501,6 @@ app.post("/webhooks/order-paid", async (req, res) => {
 
     console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
     console.log("QR:", sim?.qr_code || sim?.qr_code_image || "YOK");
-
-    // 🔜 burada mail atacağız (sonraki adım)
   } catch (err) {
     console.error("❌ WEBHOOK ERROR:", err.message);
   }
