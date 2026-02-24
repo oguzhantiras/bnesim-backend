@@ -66,7 +66,6 @@ async function getBnesimToken() {
   if (BNESIM_TOKEN_CACHE.token && BNESIM_TOKEN_CACHE.expMs - 60000 > now) {
     return BNESIM_TOKEN_CACHE.token;
   }
-
   const token = await bnesimLoginOperator();
   const expMs = decodeJwtExpMs(token);
   BNESIM_TOKEN_CACHE = { token, expMs };
@@ -102,7 +101,11 @@ async function bnesimGetProducts(area) {
   if (area) form.append("area", area);
 
   const r = await axios.post(url, form, {
-    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
     timeout: 20000,
     validateStatus: () => true,
   });
@@ -121,7 +124,11 @@ async function bnesimLicenseActivation({ name, email, phonenumber }) {
   if (phonenumber) form.append("phonenumber", phonenumber);
 
   const r = await axios.post(url, form, {
-    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
     timeout: 30000,
     validateStatus: () => true,
   });
@@ -140,7 +147,11 @@ async function bnesimActivationTxStatus(activationTransaction) {
   form.append("activationTransaction", String(activationTransaction));
 
   const r = await axios.post(url, form, {
-    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
     timeout: 20000,
     validateStatus: () => true,
   });
@@ -158,7 +169,11 @@ async function bnesimAddEsim({ license_cli, product_id }) {
   form.append("product_id", String(product_id));
 
   const r = await axios.post(url, form, {
-    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
     timeout: 30000,
     validateStatus: () => true,
   });
@@ -178,7 +193,11 @@ async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
   form.append("with_products", String(with_products));
 
   const r = await axios.post(url, form, {
-    headers: { accept: "application/json", authorization: `Bearer ${token}`, ...form.getHeaders() },
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...form.getHeaders(),
+    },
     timeout: 30000,
     validateStatus: () => true,
   });
@@ -190,51 +209,14 @@ async function bnesimSimcardDetail({ iccid, with_products = 0 }) {
 // =====================
 // ROUTES
 // =====================
-async function getProductsNormalized(area) {
-  const raw = await bnesimGetProducts(area);
-  const products = (raw?.products || []).map((p) => ({
-    id: String(p.id),
-    name: p.name,
-    price: Number(p.price),
-    currency: p.currency || "EUR",
-    volumeMB: Number(p.volume),
-    durationDays: Number(p.duration),
-    region: p.region_names || p.region || "",
-    sku: p.sku || "",
-    validity_label: p.validity_label || "",
-  }));
-  return { raw, products };
-}
-// ✅ Yeni isim (istersen kullanırsın) 
-app.get("/bnesim/products", async (req, res) => { try { const area = (req.query.area || "TR").toString(); const { products } = await getProductsNormalized(area); res.json({ ok: true, area, count: products.length, products }); } catch (e) { res.status(500).json({ ok: false, error: e.message }); } });
 
-// ✅ Eğer bir yerlerde bunu da çağırıyorsan (eski kodunda vardı)
-app.get("/api/products", async (req, res) => {
-  try {
-    const area = (req.query.area || "TR").toString().toUpperCase();
-    const { products } = await getProductsNormalized(area);
-    res.json({ ok: true, area, count: products.length, products });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ✅ Yeni isim (istersen kullanırsın)
-app.get("", async (req, res) => {
-  try {
-    const area = (req.query.area || "TR").toString();
-    const { products } = await getProductsNormalized(area);
-    res.json({ ok: true, area, count: products.length, products });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+// 1) Regions/Countries
 app.get("/bnesim/regions-countries", async (req, res) => {
   try {
     const raw = await bnesimGetRegionsCountries();
-
     const areas = raw?.areas || [];
-    // Hem region hem country için güvenli map:
+
+    // Hem region hem country için güvenli map
     const cleaned = areas
       .map((a) => ({
         name: a.country_name || a.name || a.region_name || a.region || "",
@@ -248,12 +230,15 @@ app.get("/bnesim/regions-countries", async (req, res) => {
   }
 });
 
-// Products (area paramıyla)
-app.get("", async (req, res) => {
+// 2) Products (frontend’in kullandığı endpoint) ✅
+// Senin sayfa: `${API_BASE}/bnesim/products-test?area=...` diyordu.
+// Biz burada /bnesim/products şeklinde doğru endpoint veriyoruz.
+// Frontend’de URL’yi buna çevirirsen daha temiz olur.
+app.get("/bnesim/products", async (req, res) => {
   try {
     const area = (req.query.area || "TR").toString();
-
     const raw = await bnesimGetProducts(area);
+
     const products = (raw?.products || []).map((p) => ({
       id: String(p.id),
       name: p.name,
@@ -261,7 +246,7 @@ app.get("", async (req, res) => {
       currency: p.currency || "EUR",
       volumeMB: Number(p.volume),
       durationDays: Number(p.duration),
-      region: p.region_names || "",
+      region: p.region_names || p.region || "",
       sku: p.sku || "",
       validity_label: p.validity_label || "",
     }));
@@ -272,95 +257,31 @@ app.get("", async (req, res) => {
   }
 });
 
-// License test (GET)
-app.get("/bnesim/license-test", async (req, res) => {
+// 3) Eski endpoint (backward-compat) ✅
+app.get("/bnesim/products-test", async (req, res) => {
   try {
-    const name = req.query.name || "Test User";
-    const email = req.query.email || "";
-    const phonenumber = req.query.phonenumber || "";
+    const area = (req.query.area || "TR").toString();
+    const raw = await bnesimGetProducts(area);
 
-    const activationTransaction = await bnesimLicenseActivation({ name, email, phonenumber });
+    const products = (raw?.products || []).map((p) => ({
+      id: String(p.id),
+      name: p.name,
+      price: Number(p.price),
+      currency: p.currency || "EUR",
+      volumeMB: Number(p.volume),
+      durationDays: Number(p.duration),
+      region: p.region_names || p.region || "",
+      sku: p.sku || "",
+      validity_label: p.validity_label || "",
+    }));
 
-    let last = null;
-    for (let i = 0; i < 8; i++) {
-      last = await bnesimActivationTxStatus(activationTransaction);
-      const st = last?.activation_status;
-      if (st === "OK" || st === "FAILED") break;
-      await sleep(1500);
-    }
-
-    res.json({
-      ok: true,
-      activationTransaction,
-      activation_status: last?.activation_status || null,
-      license_cli: last?.license_cli || null,
-      raw: last,
-    });
+    res.json({ ok: true, area, count: products.length, products });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// eSIM detail from tx (GET)
-app.get("/bnesim/esim-detail-from-tx", async (req, res) => {
-  try {
-    const activationTransaction = req.query.activationTransaction;
-    if (!activationTransaction) {
-      return res.status(400).json({ ok: false, error: "activationTransaction query yok" });
-    }
-
-    let last = null;
-    for (let i = 0; i < 12; i++) {
-      last = await bnesimActivationTxStatus(activationTransaction);
-      const st = last?.activation_status;
-      if (st === "OK" || st === "FAILED") break;
-      await sleep(1500);
-    }
-
-    if (!last) throw new Error("status gelmedi");
-    if (last.activation_status !== "OK") {
-      return res.json({ ok: false, activation_status: last.activation_status, rawStatus: last });
-    }
-
-    const iccid =
-      last.iccid ||
-      last.simcard_iccid ||
-      last.simcard_details?.iccid ||
-      null;
-
-    if (!iccid) {
-      return res.json({
-        ok: false,
-        activation_status: "OK",
-        error: "Status OK ama ICCID yok. rawStatus'a bak.",
-        rawStatus: last,
-      });
-    }
-
-    const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-    const sim =
-      detail?.simcardDetails ||
-      detail?.data?.simcardDetails ||
-      detail?.data?.simcard_details ||
-      null;
-
-    res.json({
-      ok: true,
-      activationTransaction,
-      iccid,
-      qr_code: sim?.qr_code || null,
-      qr_code_image: sim?.qr_code_image || null,
-      smdp_address: sim?.smdp_address || null,
-      ios_universal_installation_link: sim?.ios_universal_installation_link || null,
-      matching_id: sim?.matching_id || null,
-      rawDetail: detail,
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Tek endpoint: License + eSIM + Detail (POST)  ✅ senin asıl işin
+// 4) Tek endpoint: License + eSIM + Detail (POST) ✅ manuel test için
 app.post("/create-and-qr", async (req, res) => {
   try {
     const { product_id, customerEmail, name, phone } = req.body || {};
@@ -451,15 +372,15 @@ app.post("/create-and-qr", async (req, res) => {
 // SHOPIFY - ORDER PAID WEBHOOK
 // ===============================
 app.post("/webhooks/order-paid", async (req, res) => {
+  // Shopify retry istemiyoruz: hemen 200 dön
+  res.sendStatus(200);
+
   try {
     const order = req.body;
 
     console.log("✅ ORDER PAID WEBHOOK GELDİ");
     console.log("Order ID:", order?.id);
     console.log("Email:", order?.email);
-
-    // Shopify tekrar denemesin diye hızlıca 200
-    res.sendStatus(200);
 
     const customerEmail = order?.email;
     if (!customerEmail) return console.error("❌ Email yok");
@@ -482,19 +403,20 @@ app.post("/webhooks/order-paid", async (req, res) => {
       return;
     }
 
-    console.log("🎯 BNESIM product_id:", product_id);
+    console.log("🎯 BNESIM product_id:", product_id, "| Paket:", title);
 
     // A) License oluştur
     const licenseTx = await bnesimLicenseActivation({
       name: customerEmail,
-      email: customerEmail
+      email: customerEmail,
     });
 
     // B) License status → OK
     let licenseStatus = null;
     for (let i = 0; i < 10; i++) {
       licenseStatus = await bnesimActivationTxStatus(licenseTx);
-      if (licenseStatus?.activation_status === "OK" || licenseStatus?.activation_status === "FAILED") break;
+      const st = licenseStatus?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
       await sleep(1500);
     }
 
@@ -512,7 +434,8 @@ app.post("/webhooks/order-paid", async (req, res) => {
     let esimStatus = null;
     for (let i = 0; i < 12; i++) {
       esimStatus = await bnesimActivationTxStatus(esim.tx);
-      if (esimStatus?.activation_status === "OK" || esimStatus?.activation_status === "FAILED") break;
+      const st = esimStatus?.activation_status;
+      if (st === "OK" || st === "FAILED") break;
       await sleep(1500);
     }
 
@@ -540,21 +463,15 @@ app.post("/webhooks/order-paid", async (req, res) => {
       detail?.data?.simcardDetails ||
       null;
 
-    const qrText = sim?.qr_code || null;
-    const iosLink = sim?.ios_universal_installation_link || null;
-    const smdp = sim?.smdp_address || null;
-    const matchingId = sim?.matching_id || null;
-
     console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
+    console.log("QR:", sim?.qr_code || sim?.qr_code_image || "YOK");
 
-    
-
+    // 🔜 burada mail atacağız (sonraki adım)
   } catch (err) {
     console.error("❌ WEBHOOK ERROR:", err.message);
-    // Shopify retry istemiyoruz
-    try { res.sendStatus(200); } catch {}
   }
 });
+
 // --- start ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server listening on ${port}`));
