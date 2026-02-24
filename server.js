@@ -205,7 +205,8 @@ async function getProductsNormalized(area) {
   }));
   return { raw, products };
 }
-
+// ✅ Yeni isim (istersen kullanırsın) 
+app.get("/bnesim/products", async (req, res) => { try { const area = (req.query.area || "TR").toString(); const { products } = await getProductsNormalized(area); res.json({ ok: true, area, count: products.length, products }); } catch (e) { res.status(500).json({ ok: false, error: e.message }); } });
 
 // ✅ Eğer bir yerlerde bunu da çağırıyorsan (eski kodunda vardı)
 app.get("/api/products", async (req, res) => {
