@@ -467,11 +467,13 @@ function getSmtpTransporter(){
   }
 
   return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+  host,
+  port,
+  secure,
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  requireTLS: port === 587,     // STARTTLS'yi zorla
+  tls: { rejectUnauthorized: false } // (test amaçlı) bazı TLS handshakeleri geçer
+});
 }
 
 async function sendEsimEmail({ to, title, qrText, iosLink, smdp, matchingId }) {
