@@ -1,14 +1,13 @@
 {
   "name": "bnesim-esim-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "axios": "^1.13.5",
     "dotenv": "^17.3.1",
