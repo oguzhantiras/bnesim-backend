@@ -523,6 +523,28 @@ function escapeHtml(s){
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
 }
+
+// tessssssssst
+app.get("/test-email", async (req, res) => {
+  try {
+    const to = req.query.to || process.env.SMTP_USER;
+    await sendEsimEmail({
+      to,
+      title: "TEST PAKET",
+      qrText: "LPA:1$test.smdp.io$TESTMATCHING",
+      iosLink: "https://example.com",
+      smdp: "test.smdp.io",
+      matchingId: "TESTMATCHING",
+    });
+    res.json({ ok: true, sentTo: to });
+  } catch (e) {
+    console.error("❌ TEST EMAIL ERROR:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+
+
 // ===============================
 // SHOPIFY - ORDER PAID WEBHOOK
 // ===============================
