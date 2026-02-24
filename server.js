@@ -7,6 +7,32 @@ const FormData = require("form-data");
 const app = express();
 app.use(express.json());
 
+
+// =====================
+// QR STORE (RAM - geçici)
+// =====================
+const QR_STORE = new Map();
+
+// Shopify order’dan doğru token’ı seç
+function pickOrderToken(order) {
+  return (order?.checkout_token || order?.token || "").toString();
+}
+
+// BNESIM qr_code_image bazen sadece dosya adı geliyor.
+// full URL'ye çeviriyoruz.
+function toBnesimQrUrl(qrCodeImage) {
+  if (!qrCodeImage) return null;
+  const s = String(qrCodeImage).trim();
+
+  // zaten URL ise dokunma
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+
+  // dosya adıysa full URL yap
+  return `https://my.bnesim.com/assets/images/eSIM_QRCodes/${encodeURIComponent(s)}`;
+}
+
+
+
 // --- CORS (şimdilik açık; canlıda domain ile kısıtla) ---
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -19,6 +45,55 @@ app.use((req, res, next) => {
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+// Thank you sayfası burayı çağıracak (JSON)
+app.get("/public/qr", (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).json({ ok: false, error: "token missing" });
+
+    const data = QR_STORE.get(token);
+    if (!data) return res.json({ ok: true, status: "PENDING" });
+
+    // READY ise, frontende bizim proxy image endpointini veriyoruz
+    const qr_proxy_image =
+      data.status === "READY" ? `/public/qr-image?token=${encodeURIComponent(token)}` : null;
+
+    return res.json({ ok: true, ...data, qr_proxy_image });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// QR PNG'yi BNESIM'den çekip bizim domainden servis eder (VPN derdi biter)
+app.get("/public/qr-image", async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).send("token missing");
+
+    const data = QR_STORE.get(token);
+    if (!data || data.status !== "READY") return res.status(404).send("not ready");
+
+    const qrUrl = toBnesimQrUrl(data.qr_code_image);
+    if (!qrUrl) return res.status(404).send("no qr image");
+
+    const r = await axios.get(qrUrl, {
+      responseType: "arraybuffer",
+      timeout: 20000,
+      validateStatus: () => true,
+      headers: { accept: "image/*" },
+    });
+
+    if (r.status !== 200) return res.status(502).send("qr fetch failed");
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store"); // tek kullanımlık mantık
+    return res.send(Buffer.from(r.data));
+  } catch (e) {
+    console.error("❌ qr-image proxy error:", e.message);
+    return res.status(500).send("proxy error");
+  }
+});
 
 // =====================
 // BNESIM TOKEN CACHE
@@ -378,12 +453,13 @@ app.post("/webhooks/order-paid", async (req, res) => {
   try {
     const order = req.body;
 
-    console.log("=== TOKEN DEBUG ===");
-    console.log("order.checkout_token:", order?.checkout_token);
-    console.log("order.token:", order?.token);
-    console.log("order keys:", Object.keys(order || {}));
-    console.log("===================");
-    
+    const orderToken = pickOrderToken(order);
+console.log("🧩 orderToken (checkout_token öncelikli):", orderToken);
+
+if (orderToken) {
+  QR_STORE.set(orderToken, { status: "PENDING", created_at: Date.now() });
+}
+
     console.log("✅ ORDER PAID WEBHOOK GELDİ");
     console.log("Order ID:", order?.id);
     console.log("Email:", order?.email);
@@ -507,9 +583,30 @@ app.post("/webhooks/order-paid", async (req, res) => {
 
     console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
     console.log("QR:", sim?.qr_code || sim?.qr_code_image || "YOK");
+
+    if (orderToken) {
+  QR_STORE.set(orderToken, {
+    status: "READY",
+    iccid,
+    qr_code: sim?.qr_code || null,
+    qr_code_image: sim?.qr_code_image || (sim?.qr_code_image === "" ? null : sim?.qr_code_image) || null,
+    ios_universal_installation_link: sim?.ios_universal_installation_link || null,
+    matching_id: sim?.matching_id || null,
+    smdp_address: sim?.smdp_address || null,
+    updated_at: Date.now(),
+  });
+  console.log("✅ QR_STORE READY set edildi:", orderToken);
+}
+    
   } catch (err) {
-    console.error("❌ WEBHOOK ERROR:", err.message);
-  }
+  console.error("❌ WEBHOOK ERROR:", err.message);
+  // token varsa FAILED işaretle (opsiyonel ama iyi)
+  try {
+    const order = req.body;
+    const orderToken = pickOrderToken(order);
+    if (orderToken) QR_STORE.set(orderToken, { status: "FAILED", updated_at: Date.now() });
+  } catch {}
+}
 });
 
 // --- start ---
