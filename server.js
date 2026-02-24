@@ -4,6 +4,7 @@ const express = require("express");
 const axios = require("axios");
 const FormData = require("form-data");
 const nodemailer = require("nodemailer");
+const QRCode = require("qrcode");
 
 const app = express();
 app.use(express.json());
