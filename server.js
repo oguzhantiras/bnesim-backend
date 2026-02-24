@@ -3,8 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const FormData = require("form-data");
-const nodemailer = require("nodemailer");
-const QRCode = require("qrcode");
 
 const app = express();
 app.use(express.json());
@@ -208,16 +206,6 @@ async function getProductsNormalized(area) {
   return { raw, products };
 }
 
-// ✅ Senin frontend'in kullandığı eski endpoint
-app.get("/bnesim/products-test", async (req, res) => {
-  try {
-    const area = (req.query.area || "TR").toString();
-    const { products } = await getProductsNormalized(area);
-    res.json({ ok: true, area, count: products.length, products });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
 
 // ✅ Eğer bir yerlerde bunu da çağırıyorsan (eski kodunda vardı)
 app.get("/api/products", async (req, res) => {
@@ -231,7 +219,7 @@ app.get("/api/products", async (req, res) => {
 });
 
 // ✅ Yeni isim (istersen kullanırsın)
-app.get("/bnesim/products", async (req, res) => {
+app.get("", async (req, res) => {
   try {
     const area = (req.query.area || "TR").toString();
     const { products } = await getProductsNormalized(area);
@@ -260,7 +248,7 @@ app.get("/bnesim/regions-countries", async (req, res) => {
 });
 
 // Products (area paramıyla)
-app.get("/bnesim/products", async (req, res) => {
+app.get("", async (req, res) => {
   try {
     const area = (req.query.area || "TR").toString();
 
@@ -457,96 +445,6 @@ app.post("/create-and-qr", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-function getSmtpTransporter(){
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const secure = String(process.env.SMTP_SECURE || "false") === "true";
-
-  if(!host || !process.env.SMTP_USER || !process.env.SMTP_PASS){
-    throw new Error("SMTP env eksik: SMTP_HOST/SMTP_USER/SMTP_PASS");
-  }
-
-  return nodemailer.createTransport({
-  host,
-  port,
-  secure,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  requireTLS: port === 587,     // STARTTLS'yi zorla
-  tls: { rejectUnauthorized: false } // (test amaçlı) bazı TLS handshakeleri geçer
-});
-}
-
-async function sendEsimEmail({ to, title, qrText, iosLink, smdp, matchingId }) {
-  const transporter = getSmtpTransporter();
-
-  // QRCode lib sende zaten var: const QRCode = require("qrcode");
-  const qrPng = qrText
-    ? await QRCode.toBuffer(qrText, { type: "png", width: 480, margin: 1 })
-    : null;
-
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-
-  const html = `
-  <div style="font-family:Arial,sans-serif;line-height:1.45">
-    <h2>eSIM’in hazır ✅</h2>
-    <p><b>Paket:</b> ${escapeHtml(title || "")}</p>
-    <p>Aşağıdaki QR kodu telefonundan “Hücresel Plan Ekle / Add eSIM” bölümünde okut.</p>
-
-    ${qrPng ? `<p><img alt="eSIM QR" src="cid:esimqr" style="max-width:280px;border:1px solid #eee;border-radius:12px"/></p>` : ""}
-
-    ${iosLink ? `<p><b>iPhone hızlı kurulum:</b> <a href="${iosLink}">${iosLink}</a></p>` : ""}
-    ${smdp ? `<p><b>SM-DP+:</b> ${escapeHtml(smdp)}</p>` : ""}
-    ${matchingId ? `<p><b>Matching ID:</b> ${escapeHtml(matchingId)}</p>` : ""}
-    ${qrText ? `<p><b>QR / LPA metni:</b><br/><code>${escapeHtml(qrText)}</code></p>` : ""}
-
-    <hr/>
-    <p>Destek: ${escapeHtml(from)}</p>
-  </div>`;
-
-  const mail = {
-    from,
-    to,
-    subject: "eSIM QR Kodun Hazır ✅",
-    html,
-    attachments: qrPng ? [{
-      filename: "esim-qr.png",
-      content: qrPng,
-      cid: "esimqr"
-    }] : []
-  };
-
-  await transporter.sendMail(mail);
-}
-
-function escapeHtml(s){
-  return String(s || "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-
-// tessssssssst
-app.get("/test-email", async (req, res) => {
-  try {
-    const to = req.query.to || process.env.SMTP_USER;
-    await sendEsimEmail({
-      to,
-      title: "TEST PAKET",
-      qrText: "LPA:1$test.smdp.io$TESTMATCHING",
-      iosLink: "https://example.com",
-      smdp: "test.smdp.io",
-      matchingId: "TESTMATCHING",
-    });
-    res.json({ ok: true, sentTo: to });
-  } catch (e) {
-    console.error("❌ TEST EMAIL ERROR:", e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-
 
 // ===============================
 // SHOPIFY - ORDER PAID WEBHOOK
@@ -648,17 +546,7 @@ app.post("/webhooks/order-paid", async (req, res) => {
 
     console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
 
-    // ✅ Mail gönder
-    await sendEsimEmail({
-      to: customerEmail,
-      title,
-      qrText,
-      iosLink,
-      smdp,
-      matchingId
-    });
-
-    console.log("📩 Mail gönderildi:", customerEmail);
+    
 
   } catch (err) {
     console.error("❌ WEBHOOK ERROR:", err.message);
