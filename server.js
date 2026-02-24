@@ -378,6 +378,12 @@ app.post("/webhooks/order-paid", async (req, res) => {
   try {
     const order = req.body;
 
+    console.log("=== TOKEN DEBUG ===");
+    console.log("order.checkout_token:", order?.checkout_token);
+    console.log("order.token:", order?.token);
+    console.log("order keys:", Object.keys(order || {}));
+    console.log("===================");
+    
     console.log("✅ ORDER PAID WEBHOOK GELDİ");
     console.log("Order ID:", order?.id);
     console.log("Email:", order?.email);
