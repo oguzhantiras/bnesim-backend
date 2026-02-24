@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const FormData = require("form-data");
+const nodemailer = require("nodemailer");
 
 const app = express();
 app.use(express.json());
@@ -455,13 +456,77 @@ app.post("/create-and-qr", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+function getSmtpTransporter(){
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || "false") === "true";
+
+  if(!host || !process.env.SMTP_USER || !process.env.SMTP_PASS){
+    throw new Error("SMTP env eksik: SMTP_HOST/SMTP_USER/SMTP_PASS");
+  }
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+}
+
+async function sendEsimEmail({ to, title, qrText, iosLink, smdp, matchingId }) {
+  const transporter = getSmtpTransporter();
+
+  // QRCode lib sende zaten var: const QRCode = require("qrcode");
+  const qrPng = qrText
+    ? await QRCode.toBuffer(qrText, { type: "png", width: 480, margin: 1 })
+    : null;
+
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+  const html = `
+  <div style="font-family:Arial,sans-serif;line-height:1.45">
+    <h2>eSIM’in hazır ✅</h2>
+    <p><b>Paket:</b> ${escapeHtml(title || "")}</p>
+    <p>Aşağıdaki QR kodu telefonundan “Hücresel Plan Ekle / Add eSIM” bölümünde okut.</p>
+
+    ${qrPng ? `<p><img alt="eSIM QR" src="cid:esimqr" style="max-width:280px;border:1px solid #eee;border-radius:12px"/></p>` : ""}
+
+    ${iosLink ? `<p><b>iPhone hızlı kurulum:</b> <a href="${iosLink}">${iosLink}</a></p>` : ""}
+    ${smdp ? `<p><b>SM-DP+:</b> ${escapeHtml(smdp)}</p>` : ""}
+    ${matchingId ? `<p><b>Matching ID:</b> ${escapeHtml(matchingId)}</p>` : ""}
+    ${qrText ? `<p><b>QR / LPA metni:</b><br/><code>${escapeHtml(qrText)}</code></p>` : ""}
+
+    <hr/>
+    <p>Destek: ${escapeHtml(from)}</p>
+  </div>`;
+
+  const mail = {
+    from,
+    to,
+    subject: "eSIM QR Kodun Hazır ✅",
+    html,
+    attachments: qrPng ? [{
+      filename: "esim-qr.png",
+      content: qrPng,
+      cid: "esimqr"
+    }] : []
+  };
+
+  await transporter.sendMail(mail);
+}
+
+function escapeHtml(s){
+  return String(s || "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
 // ===============================
 // SHOPIFY - ORDER PAID WEBHOOK
 // ===============================
 app.post("/webhooks/order-paid", async (req, res) => {
-  // Shopify retry yapmasın diye EN BAŞTA 200 dön
-  res.sendStatus(200);
-
   try {
     const order = req.body;
 
@@ -469,92 +534,66 @@ app.post("/webhooks/order-paid", async (req, res) => {
     console.log("Order ID:", order?.id);
     console.log("Email:", order?.email);
 
-    const customerEmail = (order?.email || "").trim();
-    if (!customerEmail) {
-      console.error("❌ Email yok");
-      return;
-    }
+    // Shopify tekrar denemesin diye hızlıca 200
+    res.sendStatus(200);
 
-    // Şimdilik 1 adet eSIM varsayıyoruz
+    const customerEmail = order?.email;
+    if (!customerEmail) return console.error("❌ Email yok");
+
     const item = order?.line_items?.[0];
-    if (!item) {
-      console.error("❌ line_items boş");
-      return;
-    }
+    if (!item) return console.error("❌ line_items boş");
 
-    // -----------------------------
-    // 1) BNESIM product_id'yi properties'den oku
-    // -----------------------------
-    const props = item.properties || [];
-    let product_id = null;
+    // ✅ Sepete eklerken gönderdiğin BNESIM Product buradan gelir
+    const props = item?.properties || {};
+    const product_id =
+      props["BNESIM Product"] ||
+      props["BNESIM Product ID"] ||
+      props["BNESIM_PRODUCT_ID"] ||
+      "";
 
-    if (Array.isArray(props)) {
-      // Shopify genelde: [{ name, value }]
-      const found =
-        props.find(p => p?.name === "_bnesim_product_id") ||
-        props.find(p => p?.name === "BNESIM Product"); // geriye dönük
-      product_id = found?.value ? String(found.value).trim() : null;
-    } else if (props && typeof props === "object") {
-      // bazen: { _bnesim_product_id: "86744" }
-      product_id = props._bnesim_product_id
-        ? String(props._bnesim_product_id).trim()
-        : (props["BNESIM Product"] ? String(props["BNESIM Product"]).trim() : null);
-    }
-
-    console.log("Line item:", item?.title);
-    console.log("Properties:", props);
-    console.log("✅ BNESIM product_id:", product_id);
+    const title = props["Paket"] || item?.title || item?.name || "";
 
     if (!product_id) {
-      console.error("❌ _bnesim_product_id bulunamadı (sepette properties gelmiyor olabilir)");
+      console.error("❌ BNESIM product_id yok. line_item.properties içinde BNESIM Product olmalı.", props);
       return;
     }
 
-    // -----------------------------
-    // 2) BNESIM FLOW
-    // -----------------------------
+    console.log("🎯 BNESIM product_id:", product_id);
 
     // A) License oluştur
     const licenseTx = await bnesimLicenseActivation({
       name: customerEmail,
-      email: customerEmail,
+      email: customerEmail
     });
 
-    // B) License status → OK, license_cli al
+    // B) License status → OK
     let licenseStatus = null;
     for (let i = 0; i < 10; i++) {
       licenseStatus = await bnesimActivationTxStatus(licenseTx);
-      const st = licenseStatus?.activation_status;
-
-      if (st === "OK" || st === "FAILED") break;
+      if (licenseStatus?.activation_status === "OK" || licenseStatus?.activation_status === "FAILED") break;
       await sleep(1500);
     }
 
     if (licenseStatus?.activation_status !== "OK" || !licenseStatus?.license_cli) {
-      console.error("❌ license_cli alınamadı / status OK değil:", licenseStatus);
+      console.error("❌ license_cli alınamadı", licenseStatus);
       return;
     }
 
-    const license_cli = String(licenseStatus.license_cli).trim();
+    const license_cli = licenseStatus.license_cli;
 
     // C) eSIM ekle
-    const esim = await bnesimAddEsim({
-      license_cli,
-      product_id,
-    });
+    const esim = await bnesimAddEsim({ license_cli, product_id });
 
-    // D) eSIM status → OK, iccid al
+    // D) eSIM status
     let esimStatus = null;
     for (let i = 0; i < 12; i++) {
       esimStatus = await bnesimActivationTxStatus(esim.tx);
-      const st = esimStatus?.activation_status;
-
-      if (st === "OK" || st === "FAILED") break;
+      if (esimStatus?.activation_status === "OK" || esimStatus?.activation_status === "FAILED") break;
       await sleep(1500);
     }
 
     if (esimStatus?.activation_status !== "OK") {
-      console.error("❌ eSIM activation OK değil:", esimStatus);
+      console.error("❌ eSIM activation OK değil", esimStatus);
       return;
     }
 
@@ -565,30 +604,41 @@ app.post("/webhooks/order-paid", async (req, res) => {
       null;
 
     if (!iccid) {
-      console.error("❌ ICCID bulunamadı:", esimStatus);
+      console.error("❌ ICCID bulunamadı", esimStatus);
       return;
     }
 
     // E) Simcard detail → QR
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-
-    // BNESIM response farklı yerlerde dönebiliyor, ikisini de deniyoruz
     const sim =
       detail?.data?.simcard_details ||
-      detail?.data?.simcardDetails ||
       detail?.simcardDetails ||
-      detail?.simcard_details ||
+      detail?.data?.simcardDetails ||
       null;
 
-    console.log("🎉 eSIM OLUŞTU");
-    console.log("ICCID:", iccid);
-    console.log("QR:", sim?.qr_code || sim?.qr_code_image || null);
-    console.log("iOS Link:", sim?.ios_universal_installation_link || null);
+    const qrText = sim?.qr_code || null;
+    const iosLink = sim?.ios_universal_installation_link || null;
+    const smdp = sim?.smdp_address || null;
+    const matchingId = sim?.matching_id || null;
 
-    // 🔜 Buraya bir sonraki adımda mail gönderimini ekleyeceğiz
+    console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
+
+    // ✅ Mail gönder
+    await sendEsimEmail({
+      to: customerEmail,
+      title,
+      qrText,
+      iosLink,
+      smdp,
+      matchingId
+    });
+
+    console.log("📩 Mail gönderildi:", customerEmail);
+
   } catch (err) {
-    console.error("❌ WEBHOOK ERROR:", err?.message || err);
-    // zaten 200 döndük
+    console.error("❌ WEBHOOK ERROR:", err.message);
+    // Shopify retry istemiyoruz
+    try { res.sendStatus(200); } catch {}
   }
 });
 // --- start ---
