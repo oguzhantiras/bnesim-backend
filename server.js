@@ -608,4 +608,4 @@ app.post("/webhooks/order-paid", async (req, res) => {
 });
 // --- start ---
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server listening on ${port}`)); lutfen anla analız et ve nereye ne kod yapıstıracagımı soyle adım adım satır satır
+app.listen(port, () => console.log(`Server listening on ${port}`)); 
