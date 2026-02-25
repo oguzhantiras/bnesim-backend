@@ -45,7 +45,91 @@ app.use((req, res, next) => {
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/public/esim", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>eSIM Kurulum</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:720px;margin:24px auto;padding:0 16px}
+    .card{border:1px solid #eee;border-radius:12px;padding:16px;margin:12px 0}
+    .muted{color:#666;font-size:14px}
+    code{word-break:break-all}
+    #qr{margin-top:12px}
+  </style>
+</head>
+<body>
+  <h2>eSIM Kurulum</h2>
+  <div class="muted">Bu sayfa QR’ı PNG olmadan üretir (VPN gerekmez).</div>
 
+  <div class="card" id="status">Yükleniyor…</div>
+
+  <div class="card">
+    <div><strong>QR Kod</strong></div>
+    <div id="qr"></div>
+    <div class="muted" id="lpaText"></div>
+  </div>
+
+  <div class="card">
+    <div><strong>Manuel Kurulum</strong></div>
+    <div class="muted">SM-DP+ Address</div>
+    <code id="smdp"></code>
+    <div class="muted" style="margin-top:8px">Matching ID</div>
+    <code id="mid"></code>
+    <div class="muted" style="margin-top:8px">iPhone (tek tık)</div>
+    <a id="ios" href="#" target="_blank" rel="noreferrer">iOS Kurulum Linki</a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script>
+    const token = new URL(location.href).searchParams.get("token");
+    const statusEl = document.getElementById("status");
+
+    async function run(){
+      if(!token){ statusEl.textContent="token missing"; return; }
+
+      const r = await fetch("/public/qr?token=" + encodeURIComponent(token));
+      const j = await r.json();
+
+      if(!j || !j.ok){ statusEl.textContent="error"; return; }
+
+      if(j.status !== "READY"){
+        statusEl.textContent = "Hazırlanıyor… (status: " + (j.status||"PENDING") + ")";
+        setTimeout(run, 2000);
+        return;
+      }
+
+      statusEl.textContent = "Hazır ✅ ICCID: " + (j.iccid || "-");
+
+      document.getElementById("smdp").textContent = j.smdp_address || "-";
+      document.getElementById("mid").textContent  = j.matching_id || "-";
+
+      const ios = document.getElementById("ios");
+      ios.href = j.ios_universal_installation_link || "#";
+      ios.textContent = j.ios_universal_installation_link ? "iOS Kurulum Linkini Aç" : "iOS link yok";
+
+      const lpa = j.lpa;
+      document.getElementById("lpaText").textContent = lpa ? ("QR Metni: " + lpa) : "LPA yok";
+
+      const qrDiv = document.getElementById("qr");
+      qrDiv.innerHTML = "";
+      if(lpa){
+        QRCode.toCanvas(document.createElement("canvas"), lpa, { width: 260 }, (err, canvas)=>{
+          if(err){ qrDiv.textContent="QR üretilemedi"; return; }
+          qrDiv.appendChild(canvas);
+        });
+      }
+    }
+    run();
+  </script>
+</body>
+</html>
+  `);
+});
 // Thank you sayfası burayı çağıracak (JSON)
 app.get("/public/qr", (req, res) => {
   try {
@@ -54,12 +138,7 @@ app.get("/public/qr", (req, res) => {
 
     const data = QR_STORE.get(token);
     if (!data) return res.json({ ok: true, status: "PENDING" });
-
-    // READY ise, frontende bizim proxy image endpointini veriyoruz
-    const qr_proxy_image =
-      data.status === "READY" ? `/public/qr-image?token=${encodeURIComponent(token)}` : null;
-
-    return res.json({ ok: true, ...data, qr_proxy_image });
+    return res.json({ ok: true, ...data });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   }
@@ -561,13 +640,36 @@ app.post("/webhooks/order-paid", async (req, res) => {
 
     // C) Simcard detail (ASIL ÖNEMLİ KISIM)
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-    const sim = detail?.data?.simcard_details;
+   const sim =
+  detail?.simcardDetails ||
+  detail?.data?.simcardDetails ||
+  detail?.data?.simcard_details ||
+  detail?.simcard_details ||
+  null;
 
-    if (!sim) {
-      console.error("❌ simcard_details yok", detail);
-      return;
-    }
+if (!sim) {
+  console.error("❌ simcardDetails parse edilemedi", detail);
+  return;
+}
+// iOS link içindeki carddata parametresinden gerçek LPA string'i çıkarıyoruz
+let lpa = null;
+try {
+  const ios = sim?.ios_universal_installation_link || "";
+  const u = new URL(ios);
+  lpa = u.searchParams.get("carddata"); // örn: "LPA:1$consumer.e-sim.global$TN..."
+} catch {}
 
+// fallback: smdp + matching varsa birleştir (smdp_address bazen "LPA:1consumer..." gibi kirli gelebiliyor)
+if (!lpa && sim?.smdp_address && sim?.matching_id) {
+  const smdpRaw = String(sim.smdp_address);
+  const smdpClean = smdpRaw
+    .replace("LPA:1", "")      // "consumer.e-sim.global$" gibi bırakır
+    .replace(/^\$/,"");        // başta $ varsa sil
+  const smdpHost = smdpClean.replace(/\$/g, ""); // "$" işaretlerini temizle
+  lpa = `LPA:1$${smdpHost}$${sim.matching_id}`;
+}
+
+console.log("✅ LPA (QR TEXT):", lpa);
     console.log("🎉 eSIM OLUŞTU");
     console.log("ICCID:", iccid);
     console.log("QR STRING (LPA):", sim.qr_code);
@@ -578,21 +680,19 @@ app.post("/webhooks/order-paid", async (req, res) => {
     // D) STORE → PNG YOK, STRING VAR
     if (orderToken) {
       QR_STORE.set(orderToken, {
-        status: "READY",
+  status: "READY",
+  iccid,
 
-        // kimlik
-        iccid,
+  // PNG yok — QR metni var
+  lpa: lpa || null,
 
-        // QR üretmek için gereken ASIL DATA
-        qr_code: sim.qr_code || null, // LPA STRING
+  // manuel kurulum
+  smdp_address: sim?.smdp_address || null,
+  matching_id: sim?.matching_id || null,
+  ios_universal_installation_link: sim?.ios_universal_installation_link || null,
 
-        // manuel kurulum
-        smdp_address: sim.smdp_address || null,
-        matching_id: sim.matching_id || null,
-        ios_universal_installation_link: sim.ios_universal_installation_link || null,
-
-        updated_at: Date.now(),
-      });
+  updated_at: Date.now(),
+});
 
       console.log("✅ QR_STORE READY (STRING MODE):", orderToken);
     }
