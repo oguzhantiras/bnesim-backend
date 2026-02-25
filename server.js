@@ -59,7 +59,7 @@ app.get("/public/qr", (req, res) => {
     const qr_proxy_image =
       data.status === "READY" ? `/public/qr-image?token=${encodeURIComponent(token)}` : null;
 
-    return res.json({ ok: true, ...data });
+    return res.json({ ok: true, ...data, qr_proxy_image });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   }
@@ -561,39 +561,13 @@ app.post("/webhooks/order-paid", async (req, res) => {
 
     // C) Simcard detail (ASIL ÖNEMLİ KISIM)
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-    const sim =
-    detail?.simcardDetails ||
-    detail?.data?.simcardDetails ||
-    detail?.data?.simcard_details ||
-    detail?.simcard_details ||
-    null;
+    const sim = detail?.data?.simcard_details;
 
     if (!sim) {
-    console.error("❌ simcardDetails parse edilemedi", detail);
-    return;
-    }  
+      console.error("❌ simcard_details yok", detail);
+      return;
+    }
 
-// iOS link içindeki carddata parametresinden gerçek LPA string'i çıkarıyoruz
-let lpa = null;
-try {
-  const ios = sim?.ios_universal_installation_link || "";
-  const u = new URL(ios);
-  lpa = u.searchParams.get("carddata"); // örn: "LPA:1$consumer.e-sim.global$TN..."
-} catch {}
-
-// fallback: smdp + matching varsa birleştir (smdp_address bazen "LPA:1consumer..." gibi kirli gelebiliyor)
-if (!lpa && sim?.smdp_address && sim?.matching_id) {
-  const smdpRaw = String(sim.smdp_address);
-  const smdpClean = smdpRaw
-    .replace("LPA:1", "")      // "consumer.e-sim.global$" gibi bırakır
-    .replace(/^\$/,"");        // başta $ varsa sil
-  const smdpHost = smdpClean.replace(/\$/g, ""); // "$" işaretlerini temizle
-  lpa = `LPA:1$${smdpHost}$${sim.matching_id}`;
-}
-
-console.log("✅ LPA (QR TEXT):", lpa);
-
-    
     console.log("🎉 eSIM OLUŞTU");
     console.log("ICCID:", iccid);
     console.log("QR STRING (LPA):", sim.qr_code);
@@ -604,19 +578,21 @@ console.log("✅ LPA (QR TEXT):", lpa);
     // D) STORE → PNG YOK, STRING VAR
     if (orderToken) {
       QR_STORE.set(orderToken, {
-  status: "READY",
-  iccid,
+        status: "READY",
 
-  // PNG yok — QR metni var
-  lpa: lpa || null,
+        // kimlik
+        iccid,
 
-  // manuel kurulum
-  smdp_address: sim?.smdp_address || null,
-  matching_id: sim?.matching_id || null,
-  ios_universal_installation_link: sim?.ios_universal_installation_link || null,
+        // QR üretmek için gereken ASIL DATA
+        qr_code: sim.qr_code || null, // LPA STRING
 
-  updated_at: Date.now(),
-});
+        // manuel kurulum
+        smdp_address: sim.smdp_address || null,
+        matching_id: sim.matching_id || null,
+        ios_universal_installation_link: sim.ios_universal_installation_link || null,
+
+        updated_at: Date.now(),
+      });
 
       console.log("✅ QR_STORE READY (STRING MODE):", orderToken);
     }
@@ -632,4 +608,4 @@ console.log("✅ LPA (QR TEXT):", lpa);
 });
 // --- start ---
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server listening on ${port}`));
+app.listen(port, () => console.log(`Server listening on ${port}`)); lutfen anla analız et ve nereye ne kod yapıstıracagımı soyle adım adım satır satır
