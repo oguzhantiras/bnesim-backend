@@ -84,7 +84,7 @@ app.get("/public/esim", (req, res) => {
     <a id="ios" href="#" target="_blank" rel="noreferrer">iOS Kurulum Linki</a>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script>
     const token = new URL(location.href).searchParams.get("token");
     const statusEl = document.getElementById("status");
@@ -118,10 +118,12 @@ app.get("/public/esim", (req, res) => {
       const qrDiv = document.getElementById("qr");
       qrDiv.innerHTML = "";
       if(lpa){
-        QRCode.toCanvas(document.createElement("canvas"), lpa, { width: 260 }, (err, canvas)=>{
-          if(err){ qrDiv.textContent="QR üretilemedi"; return; }
-          qrDiv.appendChild(canvas);
-        });
+        new QRCode(qrDiv, {
+    text: lpa,
+    width: 260,
+    height: 260,
+    correctLevel: QRCode.CorrectLevel.M,
+  });
       }
     }
     run();
