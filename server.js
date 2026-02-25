@@ -442,54 +442,52 @@ app.post("/create-and-qr", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 // ===============================
 // SHOPIFY - ORDER PAID WEBHOOK
 // ===============================
 app.post("/webhooks/order-paid", async (req, res) => {
-  // Shopify retry istemiyoruz: hemen 200 dön
+  // Shopify retry istemiyoruz
   res.sendStatus(200);
 
   try {
     const order = req.body;
 
     const orderToken = pickOrderToken(order);
-console.log("🧩 orderToken (checkout_token öncelikli):", orderToken);
+    console.log("🧩 orderToken:", orderToken);
 
-if (orderToken) {
-  QR_STORE.set(orderToken, { status: "PENDING", created_at: Date.now() });
-}
+    if (orderToken) {
+      QR_STORE.set(orderToken, { status: "PENDING", created_at: Date.now() });
+    }
 
     console.log("✅ ORDER PAID WEBHOOK GELDİ");
     console.log("Order ID:", order?.id);
     console.log("Email:", order?.email);
 
     const customerEmail = order?.email;
-    if (!customerEmail) return console.error("❌ Email yok");
+    if (!customerEmail) {
+      console.error("❌ Email yok");
+      return;
+    }
 
-    // ✅ line_items kontrol
+    // line items
     const items = Array.isArray(order?.line_items) ? order.line_items : [];
-    if (!items.length) return console.error("❌ line_items boş");
+    if (!items.length) {
+      console.error("❌ line_items boş");
+      return;
+    }
 
-    // ✅ Shopify properties bazen array [{name,value}] geliyor — onu okuyalım
     function getPropValue(properties, key) {
       if (!properties) return "";
-
-      // nadiren object döner
       if (!Array.isArray(properties) && typeof properties === "object") {
         return String(properties[key] || "").trim();
       }
-
-      // genelde array döner
       if (Array.isArray(properties)) {
         const found = properties.find((p) => String(p?.name).trim() === key);
         return String(found?.value || "").trim();
       }
-
       return "";
     }
 
-    // ✅ BNESIM Product property’si olan line item’i seç (yoksa ilkini al)
     const item =
       items.find((li) => {
         const props = li?.properties;
@@ -507,108 +505,107 @@ if (orderToken) {
       getPropValue(props, "BNESIM Product") ||
       getPropValue(props, "BNESIM Product ID") ||
       getPropValue(props, "BNESIM_PRODUCT_ID") ||
-      getPropValue(props, "_bnesim_product_id") ||
-      "";
-
-    const title =
-      getPropValue(props, "Paket") ||
-      item?.title ||
-      item?.name ||
-      "";
+      getPropValue(props, "_bnesim_product_id");
 
     if (!product_id) {
-      console.error("❌ BNESIM product_id yok. properties:", props);
+      console.error("❌ BNESIM product_id yok", props);
       return;
     }
 
-    console.log("🎯 BNESIM product_id:", product_id, "| Paket:", title);
+    console.log("🎯 BNESIM product_id:", product_id);
 
-    // A) License oluştur
+    // A) License
     const licenseTx = await bnesimLicenseActivation({
       name: customerEmail,
       email: customerEmail,
     });
 
-    // B) License status → OK
-    let licenseStatus = null;
+    let licenseStatus;
     for (let i = 0; i < 10; i++) {
       licenseStatus = await bnesimActivationTxStatus(licenseTx);
-      const st = licenseStatus?.activation_status;
-      if (st === "OK" || st === "FAILED") break;
+      if (licenseStatus?.activation_status === "OK") break;
       await sleep(1500);
     }
 
-    if (licenseStatus?.activation_status !== "OK" || !licenseStatus?.license_cli) {
+    if (!licenseStatus?.license_cli) {
       console.error("❌ license_cli alınamadı", licenseStatus);
       return;
     }
 
     const license_cli = licenseStatus.license_cli;
 
-    // C) eSIM ekle
+    // B) eSIM satın al
     const esim = await bnesimAddEsim({ license_cli, product_id });
 
-    // D) eSIM status
-    let esimStatus = null;
+    let esimStatus;
     for (let i = 0; i < 12; i++) {
       esimStatus = await bnesimActivationTxStatus(esim.tx);
-      const st = esimStatus?.activation_status;
-      if (st === "OK" || st === "FAILED") break;
+      if (esimStatus?.activation_status === "OK") break;
       await sleep(1500);
     }
 
     if (esimStatus?.activation_status !== "OK") {
-      console.error("❌ eSIM activation OK değil", esimStatus);
+      console.error("❌ eSIM activation failed", esimStatus);
       return;
     }
 
     const iccid =
       esimStatus?.iccid ||
       esimStatus?.simcard_iccid ||
-      esimStatus?.simcard_details?.iccid ||
-      null;
+      esimStatus?.simcard_details?.iccid;
 
     if (!iccid) {
-      console.error("❌ ICCID bulunamadı", esimStatus);
+      console.error("❌ ICCID yok", esimStatus);
       return;
     }
 
-    // E) Simcard detail → QR
+    // C) Simcard detail (ASIL ÖNEMLİ KISIM)
     const detail = await bnesimSimcardDetail({ iccid, with_products: 0 });
-    const sim =
-      detail?.data?.simcard_details ||
-      detail?.simcardDetails ||
-      detail?.data?.simcardDetails ||
-      null;
+    const sim = detail?.data?.simcard_details;
 
-    console.log("🎉 eSIM OLUŞTU | ICCID:", iccid);
-    console.log("QR:", sim?.qr_code || sim?.qr_code_image || "YOK");
+    if (!sim) {
+      console.error("❌ simcard_details yok", detail);
+      return;
+    }
 
+    console.log("🎉 eSIM OLUŞTU");
+    console.log("ICCID:", iccid);
+    console.log("QR STRING (LPA):", sim.qr_code);
+    console.log("SMDP:", sim.smdp_address);
+    console.log("MATCHING ID:", sim.matching_id);
+    console.log("IOS LINK:", sim.ios_universal_installation_link);
+
+    // D) STORE → PNG YOK, STRING VAR
     if (orderToken) {
-  QR_STORE.set(orderToken, {
-    status: "READY",
-    iccid,
-    qr_code: sim?.qr_code || null,
-    qr_code_image: sim?.qr_code_image || (sim?.qr_code_image === "" ? null : sim?.qr_code_image) || null,
-    ios_universal_installation_link: sim?.ios_universal_installation_link || null,
-    matching_id: sim?.matching_id || null,
-    smdp_address: sim?.smdp_address || null,
-    updated_at: Date.now(),
-  });
-  console.log("✅ QR_STORE READY set edildi:", orderToken);
-}
-    
-  } catch (err) {
-  console.error("❌ WEBHOOK ERROR:", err.message);
-  // token varsa FAILED işaretle (opsiyonel ama iyi)
-  try {
-    const order = req.body;
-    const orderToken = pickOrderToken(order);
-    if (orderToken) QR_STORE.set(orderToken, { status: "FAILED", updated_at: Date.now() });
-  } catch {}
-}
-});
+      QR_STORE.set(orderToken, {
+        status: "READY",
 
+        // kimlik
+        iccid,
+
+        // QR üretmek için gereken ASIL DATA
+        qr_code: sim.qr_code || null, // LPA STRING
+
+        // manuel kurulum
+        smdp_address: sim.smdp_address || null,
+        matching_id: sim.matching_id || null,
+        ios_universal_installation_link: sim.ios_universal_installation_link || null,
+
+        updated_at: Date.now(),
+      });
+
+      console.log("✅ QR_STORE READY (STRING MODE):", orderToken);
+    }
+  } catch (err) {
+    console.error("❌ WEBHOOK ERROR:", err);
+    try {
+      const orderToken = pickOrderToken(req.body);
+      if (orderToken) {
+        QR_STORE.set(orderToken, { status: "FAILED", updated_at: Date.now() });
+      }
+    } catch {}
+  }
+});
 // --- start ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server listening on ${port}`));
