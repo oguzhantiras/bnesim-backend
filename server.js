@@ -3,10 +3,11 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const FormData = require("form-data");
-
+const chatRoutes = require("./chat/chat.routes");
+const { startChatCache } = require("./chat/chat.service");
 const app = express();
 app.use(express.json());
-
+app.use("/api/chat", chatRoutes);
 
 // =====================
 // QR STORE (RAM - geçici)
@@ -710,4 +711,7 @@ console.log("✅ LPA (QR TEXT):", lpa);
 });
 // --- start ---
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server listening on ${port}`)); 
+app.listen(port, async () => {
+  console.log(`Server listening on ${port}`);
+  await startChatCache();
+});
