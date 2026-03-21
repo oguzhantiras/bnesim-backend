@@ -5,9 +5,7 @@ const axios = require("axios");
 const FormData = require("form-data");
 const chatRoutes = require("./chat/chat.routes");
 const { startChatCache } = require("./chat/chat.service");
-const app = express();
-app.use(express.json());
-app.use("/api/chat", chatRoutes);
+
 
 // =====================
 // QR STORE (RAM - geçici)
@@ -34,6 +32,10 @@ function toBnesimQrUrl(qrCodeImage) {
 
 
 
+const app = express();
+app.use(express.json());
+
+
 // --- CORS (şimdilik açık; canlıda domain ile kısıtla) ---
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -42,6 +44,9 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+app.use("/api/chat", chatRoutes);
+
+
 
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
