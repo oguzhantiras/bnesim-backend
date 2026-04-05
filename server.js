@@ -152,6 +152,28 @@ app.get("/public/qr", (req, res) => {
   }
 });
 
+
+app.get("/debug/bnesim-login", async (req, res) => {
+  try {
+    const token = await bnesimLoginOperator();
+    res.json({
+      ok: true,
+      token_preview: String(token).slice(0, 25) + "...",
+      expMs: decodeJwtExpMs(token) || null
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: e.message
+    });
+  }
+});
+
+
+
+
+
+
 // QR PNG'yi BNESIM'den çekip bizim domainden servis eder (VPN derdi biter)
 app.get("/public/qr-image", async (req, res) => {
   try {
