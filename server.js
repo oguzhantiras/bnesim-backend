@@ -717,7 +717,6 @@ console.log("✅ LPA (QR TEXT):", lpa);
   }
 });
 
-
 app.post("/support-webhook", async (req, res) => {
   try {
     const order = req.body;
@@ -738,7 +737,6 @@ app.post("/support-webhook", async (req, res) => {
       date: new Date().toISOString()
     };
 
-    // basit json dosyaya yaz (geçici)
     const fs = require("fs");
 
     let data = [];
@@ -746,10 +744,18 @@ app.post("/support-webhook", async (req, res) => {
       data = JSON.parse(fs.readFileSync("supporters.json"));
     } catch {}
 
-    data.unshift(supporter); // en üste ekle
-    data = data.slice(0, 50); // max 50 kişi
+    data.unshift(supporter);
+    data = data.slice(0, 50);
 
     fs.writeFileSync("supporters.json", JSON.stringify(data, null, 2));
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
+  }
+});
+
 app.get("/supporters", (req, res) => {
   const fs = require("fs");
 
@@ -758,12 +764,6 @@ app.get("/supporters", (req, res) => {
     res.json(data);
   } catch {
     res.json([]);
-  }
-});
-    res.sendStatus(200);
-  } catch (err) {
-    console.error(err);
-    res.sendStatus(500);
   }
 });
 
