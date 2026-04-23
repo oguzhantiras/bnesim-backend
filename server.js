@@ -716,6 +716,62 @@ console.log("✅ LPA (QR TEXT):", lpa);
     } catch {}
   }
 });
+
+
+app.post("/support-webhook", async (req, res) => {
+  try {
+    const order = req.body;
+
+    const item = order.line_items.find(i =>
+      i.properties?.some(p => p.name === "_support_tier")
+    );
+
+    if (!item) return res.sendStatus(200);
+
+    const getProp = (key) =>
+      item.properties.find(p => p.name === key)?.value;
+
+    const supporter = {
+      name: getProp("İsim") || order.customer?.first_name || "Anonim",
+      message: getProp("Mesaj") || "💛",
+      amount: item.price,
+      date: new Date().toISOString()
+    };
+
+    // basit json dosyaya yaz (geçici)
+    const fs = require("fs");
+
+    let data = [];
+    try {
+      data = JSON.parse(fs.readFileSync("supporters.json"));
+    } catch {}
+
+    data.unshift(supporter); // en üste ekle
+    data = data.slice(0, 50); // max 50 kişi
+
+    fs.writeFileSync("supporters.json", JSON.stringify(data, null, 2));
+app.get("/supporters", (req, res) => {
+  const fs = require("fs");
+
+  try {
+    const data = JSON.parse(fs.readFileSync("supporters.json"));
+    res.json(data);
+  } catch {
+    res.json([]);
+  }
+});
+    res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
+  }
+});
+
+
+
+
+
+
 // --- start ---
 const port = process.env.PORT || 3000;
 app.listen(port, async () => {
