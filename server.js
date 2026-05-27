@@ -721,14 +721,31 @@ app.post("/support-webhook", async (req, res) => {
   try {
     const order = req.body;
 
-    const item = order.line_items.find(i =>
-      i.properties?.some(p => p.name === "_support_tier")
-    );
+    const item = order.line_items.find(i => {
+  const props = i.properties || {};
+
+  // object ise
+  if (!Array.isArray(props)) {
+    return props["_support_tier"];
+  }
+
+  // array ise
+  return props.some(p => p.name === "_support_tier");
+});
 
     if (!item) return res.sendStatus(200);
 
-    const getProp = (key) =>
-      item.properties.find(p => p.name === key)?.value;
+    const getProp = (key) =>{
+  const props = item.properties || {};
+
+  // object support
+  if (!Array.isArray(props)) {
+    return props[key];
+  }
+
+  // array support
+  return props.find(p => p.name === key)?.value;
+};
 
     const supporter = {
       name: getProp("İsim") || order.customer?.first_name || "Anonim",
