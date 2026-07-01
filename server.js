@@ -762,7 +762,7 @@ app.post("/support-webhook", async (req, res) => {
     } catch {}
 
     data.unshift(supporter);
-    data = data.slice(0, 50);
+    data = data.slice(0, 1000);
 
     fs.writeFileSync("supporters.json", JSON.stringify(data, null, 2));
 
