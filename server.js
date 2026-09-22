@@ -35,7 +35,6 @@ function toBnesimQrUrl(qrCodeImage) {
 
 
 const app = express();
-const server = http.createServer(app);
 app.use(express.json());
 
 
