@@ -130,35 +130,61 @@ cameraWss.on("connection", (ws, req) => {
     }
 
 
-    // =========================
-    // BROWSER VIEWER
-    // =========================
+ if (text === "VIEWER") {
 
-    if (text === "VIEWER") {
+  cameraViewers.add(ws);
 
-      cameraViewers.add(ws);
+  console.log(
+    `👀 Kamera izleyicisi bağlandı. Toplam: ${cameraViewers.size}`
+  );
 
-      console.log(
-        `👀 Kamera izleyicisi bağlandı. Toplam: ${cameraViewers.size}`
-      );
+  ws.send(JSON.stringify({
+    type: "camera_status",
+    online: Boolean(esp32Camera)
+  }));
 
-      ws.send(JSON.stringify({
-        type: "camera_status",
-        online: Boolean(esp32Camera)
-      }));
+  // =========================
+  // VIEWER -> ESP32 KOMUTLARI
+  // =========================
 
-      ws.on("close", () => {
+  ws.on("message", (message, isBinary) => {
 
-        cameraViewers.delete(ws);
+    if (isBinary) return;
 
-        console.log(
-          `👀 İzleyici ayrıldı. Toplam: ${cameraViewers.size}`
-        );
+    const command = message.toString().trim();
 
-      });
+    console.log("🎮 Viewer command:", command);
 
-      return;
+    if (
+      (command === "START" || command === "STOP") &&
+      esp32Camera &&
+      esp32Camera.readyState === 1
+    ) {
+
+      esp32Camera.send(command);
+
+      console.log(`📡 ESP32'ye gönderildi: ${command}`);
+
+    } else if (command === "START" || command === "STOP") {
+
+      console.log("⚠️ ESP32 kamera bağlı değil");
+
     }
+
+  });
+
+  ws.on("close", () => {
+
+    cameraViewers.delete(ws);
+
+    console.log(
+      `👀 İzleyici ayrıldı. Toplam: ${cameraViewers.size}`
+    );
+
+  });
+
+  return;
+}
 
   });
 
@@ -1160,8 +1186,6 @@ closeBtn.addEventListener(
 );
 
 
-// Sayfa açıldığında kamerayı otomatik başlat
-connectCamera();
 
 </script>
 
