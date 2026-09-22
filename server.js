@@ -128,9 +128,7 @@ cameraWss.on("connection", (ws, req) => {
 
       return;
     }
-
-
- if (text === "VIEWER") {
+if (text === "VIEWER") {
 
   cameraViewers.add(ws);
 
@@ -143,9 +141,9 @@ cameraWss.on("connection", (ws, req) => {
     online: Boolean(esp32Camera)
   }));
 
-  // =========================
+  // ==========================================
   // VIEWER -> ESP32 KOMUTLARI
-  // =========================
+  // ==========================================
 
   ws.on("message", (message, isBinary) => {
 
@@ -153,22 +151,33 @@ cameraWss.on("connection", (ws, req) => {
 
     const command = message.toString().trim();
 
-    console.log("🎮 Viewer command:", command);
+    console.log(`🎮 Viewer komutu: ${command}`);
 
+    // Sadece izin verilen komutları ESP32'ye gönder
     if (
-      (command === "START" || command === "STOP") &&
-      esp32Camera &&
-      esp32Camera.readyState === 1
+      command === "START" ||
+      command === "STOP" ||
+      command === "SLEEP"
     ) {
 
-      esp32Camera.send(command);
+      if (
+        esp32Camera &&
+        esp32Camera.readyState === 1
+      ) {
 
-      console.log(`📡 ESP32'ye gönderildi: ${command}`);
+        esp32Camera.send(command);
 
-    } else if (command === "START" || command === "STOP") {
+        console.log(
+          `📡 ESP32'ye gönderildi: ${command}`
+        );
 
-      console.log("⚠️ ESP32 kamera bağlı değil");
+      } else {
 
+        console.log(
+          `⚠️ ESP32 bağlı değil. Komut gönderilemedi: ${command}`
+        );
+
+      }
     }
 
   });
@@ -185,9 +194,7 @@ cameraWss.on("connection", (ws, req) => {
 
   return;
 }
-
-  });
-
+    });
 });
 
 app.get("/camera-status", (req, res) => {
@@ -1044,6 +1051,8 @@ app.get("/camera-view", (req, res) => {
     <button id="closeBtn" disabled>
       🔴 Kamerayı Kapat
     </button>
+    
+<button id="sleepBtn">⚫ Sistemi Uyut</button>
 
   </div>
 
@@ -1058,7 +1067,7 @@ const status = document.getElementById("status");
 
 const openBtn = document.getElementById("openBtn");
 const closeBtn = document.getElementById("closeBtn");
-
+const sleepBtn = document.getElementById("sleepBtn");
 
 function connectCamera() {
 
@@ -1172,7 +1181,33 @@ function disconnectCamera() {
   openBtn.disabled = false;
   closeBtn.disabled = true;
 }
+function sleepCamera() {
 
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+
+    console.log("⚠️ Viewer WebSocket bağlı değil");
+
+    return;
+  }
+
+  console.log("💤 ESP32 uykuya gönderiliyor...");
+
+  ws.send("SLEEP");
+
+  status.textContent = "💤 SİSTEM UYKUDA";
+
+  // ESP32 artık WebSocket'e cevap veremeyeceği için
+  // browser tarafındaki bağlantıyı da kapatıyoruz.
+
+  setTimeout(() => {
+
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+
+  }, 500);
+}
 
 openBtn.addEventListener(
   "click",
@@ -1184,7 +1219,10 @@ closeBtn.addEventListener(
   "click",
   disconnectCamera
 );
-
+sleepBtn.addEventListener(
+  "click",
+  sleepCamera
+);
 
 
 </script>
