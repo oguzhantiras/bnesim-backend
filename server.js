@@ -54,8 +54,17 @@ app.use("/api/chat", chatRoutes);
 // ===============================
 
 const cameraWss = new WebSocketServer({
-  server,
-  path: "/camera"
+  noServer: true
+});
+
+server.on("upgrade", (request, socket, head) => {
+  if (request.url === "/camera") {
+    cameraWss.handleUpgrade(request, socket, head, (ws) => {
+      cameraWss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
 });
 
 let esp32Camera = null;
