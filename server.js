@@ -60,8 +60,6 @@ const cameraWss = new WebSocketServer({
 
 let esp32Camera = null;
 
-const cameraViewers = new Set();
-
 
 // ==========================================
 // /camera WEBSOCKET UPGRADE
