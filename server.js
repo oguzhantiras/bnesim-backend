@@ -35,6 +35,7 @@ function toBnesimQrUrl(qrCodeImage) {
 
 
 const app = express();
+const server = http.createServer(app);
 app.use(express.json());
 
 
@@ -887,40 +888,10 @@ app.get("/supporters", (req, res) => {
 
 
 
-// --- start ---
 const port = process.env.PORT || 3000;
-
-const server = http.createServer(app);
-
-const cameraWss = new WebSocketServer({
-  noServer: true
-});
-
-server.on("upgrade", (request, socket, head) => {
-  if (request.url === "/camera") {
-    cameraWss.handleUpgrade(request, socket, head, (ws) => {
-      cameraWss.emit("connection", ws, request);
-    });
-  } else {
-    socket.destroy();
-  }
-});
-
-cameraWss.on("connection", (ws) => {
-  console.log("📷 ESP32 CAMERA CONNECTED");
-
-  ws.on("message", (message) => {
-    console.log("📨 Camera message:", message.toString());
-  });
-
-  ws.on("close", () => {
-    console.log("❌ ESP32 CAMERA DISCONNECTED");
-  });
-});
 
 server.listen(port, async () => {
   console.log(`Server listening on ${port}`);
-  console.log("📷 Camera WebSocket: /camera");
-
+  console.log(`📷 Camera WebSocket: /camera`);
   await startChatCache();
 });
