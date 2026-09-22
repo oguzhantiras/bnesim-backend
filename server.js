@@ -1049,7 +1049,6 @@ function connectCamera() {
 
   ws.binaryType = "arraybuffer";
 
-
   ws.onopen = () => {
 
     console.log("Viewer connected");
@@ -1064,39 +1063,26 @@ function connectCamera() {
 
   };
 
-
   ws.onmessage = (event) => {
 
     if (typeof event.data === "string") {
-
       console.log(event.data);
-
       return;
     }
 
-
     const blob = new Blob(
       [event.data],
-      {
-        type: "image/jpeg"
-      }
+      { type: "image/jpeg" }
     );
-
 
     const url = URL.createObjectURL(blob);
 
-
     img.onload = () => {
-
       URL.revokeObjectURL(url);
-
     };
 
-
     img.src = url;
-
   };
-
 
   ws.onerror = () => {
 
@@ -1104,7 +1090,6 @@ function connectCamera() {
     status.className = "status offline";
 
   };
-
 
   ws.onclose = () => {
 
@@ -1121,17 +1106,34 @@ function connectCamera() {
     ws = null;
 
   };
-
 }
 
 
 function disconnectCamera() {
 
-  if (ws) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
 
-    ws.close();
+    // ESP32'ye kamerayı durdurmasını söyle
+    ws.send("STOP");
 
-    ws = null;
+    console.log("🔴 STOP sent to ESP32");
+
+    // Biraz bekleyip viewer bağlantısını kapat
+    setTimeout(() => {
+
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+
+    }, 200);
+
+  } else {
+
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
 
   }
 
@@ -1142,7 +1144,6 @@ function disconnectCamera() {
 
   openBtn.disabled = false;
   closeBtn.disabled = true;
-
 }
 
 
