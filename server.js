@@ -907,7 +907,85 @@ app.get("/supporters", (req, res) => {
   }
 });
 
+app.get("/camera-view", (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yırtık Kamera</title>
 
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    img {
+      width: 100%;
+      max-width: 800px;
+      height: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+<img id="camera" />
+
+<script>
+
+const img = document.getElementById("camera");
+
+const ws = new WebSocket(
+  "wss://" + location.host + "/camera"
+);
+
+ws.binaryType = "arraybuffer";
+
+ws.onopen = () => {
+  console.log("Viewer connected");
+
+  // Kendimizi viewer olarak tanıtıyoruz
+  ws.send("VIEWER");
+};
+
+ws.onmessage = (event) => {
+
+  if (typeof event.data === "string") {
+    console.log(event.data);
+    return;
+  }
+
+  const blob = new Blob(
+    [event.data],
+    { type: "image/jpeg" }
+  );
+
+  const url = URL.createObjectURL(blob);
+
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+  };
+
+  img.src = url;
+};
+
+ws.onclose = () => {
+  console.log("Viewer disconnected");
+};
+
+</script>
+
+</body>
+</html>
+  `);
+});
 
 
 
