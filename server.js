@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const FormData = require("form-data");
+const http = require("http");
+const { WebSocketServer } = require("ws");
 const chatRoutes = require("./chat/chat.routes");
 const { startChatCache } = require("./chat/chat.service");
 
@@ -33,6 +35,7 @@ function toBnesimQrUrl(qrCodeImage) {
 
 
 const app = express();
+const server = http.createServer(app);
 app.use(express.json());
 
 
@@ -46,7 +49,94 @@ app.use((req, res, next) => {
 });
 app.use("/api/chat", chatRoutes);
 
+// ===============================
+// YIRTIK CAMERA - WEBSOCKET
+// ===============================
 
+const cameraWss = new WebSocketServer({
+  server,
+  path: "/camera"
+});
+
+let esp32Camera = null;
+const cameraViewers = new Set();
+
+cameraWss.on("connection", (ws, req) => {
+  console.log("📷 Camera WebSocket bağlantısı geldi");
+
+  // İlk mesaj ESP32 veya viewer olduğunu belirleyecek
+  ws.once("message", (message, isBinary) => {
+    try {
+      const text = message.toString();
+
+      // ESP32 kendisini böyle tanıtacak
+      if (text === "ESP32_CAMERA") {
+        esp32Camera = ws;
+
+        console.log("✅ ESP32 kamera bağlandı");
+
+        ws.send(JSON.stringify({
+          type: "registered",
+          device: "yirtik-camera-01"
+        }));
+
+        ws.on("message", (data, binary) => {
+          if (!binary) return;
+
+          // Kameradan gelen JPEG'i bütün izleyicilere gönder
+          for (const viewer of cameraViewers) {
+            if (viewer.readyState === 1) {
+              viewer.send(data, { binary: true });
+            }
+          }
+        });
+
+        ws.on("close", () => {
+          if (esp32Camera === ws) {
+            esp32Camera = null;
+            console.log("❌ ESP32 kamera bağlantısı kapandı");
+          }
+        });
+
+        return;
+      }
+
+      // Browser viewer
+      if (text === "VIEWER") {
+        cameraViewers.add(ws);
+
+        console.log(
+          `👀 Kamera izleyicisi bağlandı. Toplam: ${cameraViewers.size}`
+        );
+
+        ws.send(JSON.stringify({
+          type: "camera_status",
+          online: Boolean(esp32Camera)
+        }));
+
+        ws.on("close", () => {
+          cameraViewers.delete(ws);
+
+          console.log(
+            `👀 İzleyici ayrıldı. Toplam: ${cameraViewers.size}`
+          );
+        });
+
+        return;
+      }
+
+    } catch (err) {
+      console.error("❌ Camera WebSocket error:", err);
+    }
+  });
+});
+
+app.get("/camera-status", (req, res) => {
+  res.json({
+    online: Boolean(esp32Camera),
+    viewers: cameraViewers.size
+  });
+});
 
 // --- basic routes ---
 app.get("/", (req, res) => res.send("OK"));
@@ -793,5 +883,6 @@ app.get("/supporters", (req, res) => {
 const port = process.env.PORT || 3000;
 app.listen(port, async () => {
   console.log(`Server listening on ${port}`);
+  console.log(`📷 Camera WebSocket: /camera`);
   await startChatCache();
 });
