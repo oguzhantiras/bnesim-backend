@@ -1054,7 +1054,8 @@ function connectCamera() {
     console.log("Viewer connected");
 
     ws.send("VIEWER");
-
+    ws.send("START");
+    
     status.textContent = "🟢 CANLI";
     status.className = "status online";
 
