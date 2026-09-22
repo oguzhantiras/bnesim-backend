@@ -1169,11 +1169,263 @@ connectCamera();
 </html>
   `);
 });
+// ==========================================
+// CAMERA WEBSOCKET SYSTEM
+// ==========================================
 
 const port = process.env.PORT || 3000;
 
+// ESP32 kamera bağlantısı
+let cameraDevice = null;
+
+// Shopify / tarayıcı izleyicileri
+const cameraViewers = new Set();
+
+
+// ==========================================
+// ESP32'YE KOMUT GÖNDER
+// ==========================================
+
+function sendCameraCommand(command) {
+
+  if (!cameraDevice) {
+    console.log(`⚠️ ESP32 bağlı değil: ${command}`);
+    return;
+  }
+
+  if (cameraDevice.readyState !== 1) {
+    console.log(`⚠️ ESP32 WebSocket hazır değil`);
+    return;
+  }
+
+  cameraDevice.send(command);
+
+  console.log(`📤 ESP32 ← ${command}`);
+}
+
+
+// ==========================================
+// WEBSOCKET UPGRADE
+// ==========================================
+
+server.on("upgrade", (request, socket, head) => {
+
+  if (request.url !== "/camera") {
+    socket.destroy();
+    return;
+  }
+
+  cameraWss.handleUpgrade(
+    request,
+    socket,
+    head,
+    (ws) => {
+      cameraWss.emit("connection", ws, request);
+    }
+  );
+
+});
+
+
+// ==========================================
+// CAMERA WEBSOCKET
+// ==========================================
+
+cameraWss.on("connection", (ws) => {
+
+  console.log("📷 Camera WebSocket bağlantısı geldi");
+
+  let clientType = null;
+
+
+  // ========================================
+  // MESAJ GELDİ
+  // ========================================
+
+  ws.on("message", (message, isBinary) => {
+
+    // --------------------------------------
+    // JPEG FRAME
+    // --------------------------------------
+
+    if (isBinary) {
+
+      if (clientType !== "camera") {
+        return;
+      }
+
+      // ESP32'den gelen görüntüyü
+      // bütün izleyicilere gönder
+      for (const viewer of cameraViewers) {
+
+        if (viewer.readyState === 1) {
+          viewer.send(message);
+        }
+
+      }
+
+      return;
+    }
+
+
+    const text = message.toString();
+
+    console.log("📨 Camera message:", text);
+
+
+    // ======================================
+    // ESP32 KAYDI
+    // ======================================
+
+    if (text === "ESP32_CAMERA") {
+
+      clientType = "camera";
+
+      cameraDevice = ws;
+
+      console.log("✅ ESP32 kamera bağlandı");
+
+      ws.send(JSON.stringify({
+        type: "registered",
+        device: "yirtik-camera-01"
+      }));
+
+      // Güvenlik için başlangıçta kamera kapalı
+      sendCameraCommand("STOP");
+
+      return;
+    }
+
+
+    // ======================================
+    // SHOPIFY / VIEWER
+    // ======================================
+
+    if (text === "VIEWER") {
+
+      clientType = "viewer";
+
+      cameraViewers.add(ws);
+
+      console.log(
+        `👀 Viewer bağlandı. Toplam: ${cameraViewers.size}`
+      );
+
+      ws.send(JSON.stringify({
+        type: "camera-status",
+        online: cameraDevice !== null,
+        viewers: cameraViewers.size
+      }));
+
+      // İlk izleyici geldiğinde kamerayı aç
+      if (cameraViewers.size === 1) {
+
+        sendCameraCommand("START");
+
+      }
+
+      return;
+    }
+
+
+    // ======================================
+    // START
+    // ======================================
+
+    if (text === "START") {
+
+      if (clientType === "viewer") {
+        sendCameraCommand("START");
+      }
+
+      return;
+    }
+
+
+    // ======================================
+    // STOP
+    // ======================================
+
+    if (text === "STOP") {
+
+      if (clientType === "viewer") {
+        sendCameraCommand("STOP");
+      }
+
+      return;
+    }
+
+  });
+
+
+  // ========================================
+  // BAĞLANTI KAPANDI
+  // ========================================
+
+  ws.on("close", () => {
+
+    // ESP32 kapandı
+    if (clientType === "camera") {
+
+      if (cameraDevice === ws) {
+        cameraDevice = null;
+      }
+
+      console.log("❌ ESP32 kamera bağlantısı koptu");
+
+      // Viewer'lara offline bildir
+      for (const viewer of cameraViewers) {
+
+        if (viewer.readyState === 1) {
+
+          viewer.send(JSON.stringify({
+            type: "camera-status",
+            online: false,
+            viewers: cameraViewers.size
+          }));
+
+        }
+
+      }
+
+    }
+
+
+    // Viewer kapandı
+    if (clientType === "viewer") {
+
+      cameraViewers.delete(ws);
+
+      console.log(
+        `👋 Viewer ayrıldı. Kalan: ${cameraViewers.size}`
+      );
+
+
+      // Hiç viewer kalmadıysa
+      // ESP32 kamerayı kapat
+      if (cameraViewers.size === 0) {
+
+        sendCameraCommand("STOP");
+
+      }
+
+    }
+
+  });
+
+});
+
+
+// ==========================================
+// SERVER START
+// ==========================================
+
 server.listen(port, async () => {
+
   console.log(`Server listening on ${port}`);
+
   console.log(`📷 Camera WebSocket: /camera`);
+
   await startChatCache();
+
 });
