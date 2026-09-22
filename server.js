@@ -89,16 +89,15 @@ cameraWss.on("connection", (ws, req) => {
           device: "yirtik-camera-01"
         }));
 
-        ws.on("message", (data, binary) => {
-          if (!binary) return;
+      ws.on("message", (message, isBinary) => {
 
-          // Kameradan gelen JPEG'i bütün izleyicilere gönder
-          for (const viewer of cameraViewers) {
-            if (viewer.readyState === 1) {
-              viewer.send(data, { binary: true });
-            }
-          }
-        });
+  if (isBinary) {
+    console.log(`📷 Frame received: ${message.length} bytes`);
+  } else {
+    console.log("📨 Camera message:", message.toString());
+  }
+
+});
 
         ws.on("close", () => {
           if (esp32Camera === ws) {
