@@ -906,79 +906,260 @@ app.get("/supporters", (req, res) => {
     res.json([]);
   }
 });
-
 app.get("/camera-view", (req, res) => {
   res.send(`
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <title>Yırtık Kamera</title>
 
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      min-height: 100vh;
       display: flex;
       justify-content: center;
       align-items: center;
-      min-height: 100vh;
     }
 
-    img {
+    .camera-container {
       width: 100%;
-      max-width: 800px;
+      max-width: 900px;
+      text-align: center;
+    }
+
+    .camera-wrapper {
+      width: 100%;
+      background: #111;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #camera {
+      width: 100%;
       height: auto;
+      display: block;
+    }
+
+    .status {
+      padding: 12px;
+      font-size: 14px;
+    }
+
+    .online {
+      color: #00ff66;
+    }
+
+    .offline {
+      color: #ff4444;
+    }
+
+    .buttons {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      padding: 15px;
+    }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 12px 22px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #openBtn {
+      background: #00c853;
+      color: white;
+    }
+
+    #closeBtn {
+      background: #d50000;
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
   </style>
 </head>
 
 <body>
 
-<img id="camera" />
+<div class="camera-container">
+
+  <div class="camera-wrapper">
+    <img id="camera" alt="Kamera görüntüsü">
+  </div>
+
+  <div id="status" class="status offline">
+    🔴 Kamera kapalı
+  </div>
+
+  <div class="buttons">
+
+    <button id="openBtn">
+      🟢 Kamerayı Aç
+    </button>
+
+    <button id="closeBtn" disabled>
+      🔴 Kamerayı Kapat
+    </button>
+
+  </div>
+
+</div>
 
 <script>
 
+let ws = null;
+
 const img = document.getElementById("camera");
+const status = document.getElementById("status");
 
-const ws = new WebSocket(
-  "wss://" + location.host + "/camera"
-);
+const openBtn = document.getElementById("openBtn");
+const closeBtn = document.getElementById("closeBtn");
 
-ws.binaryType = "arraybuffer";
 
-ws.onopen = () => {
-  console.log("Viewer connected");
+function connectCamera() {
 
-  // Kendimizi viewer olarak tanıtıyoruz
-  ws.send("VIEWER");
-};
-
-ws.onmessage = (event) => {
-
-  if (typeof event.data === "string") {
-    console.log(event.data);
+  if (ws && ws.readyState === WebSocket.OPEN) {
     return;
   }
 
-  const blob = new Blob(
-    [event.data],
-    { type: "image/jpeg" }
+  status.textContent = "🟡 Bağlanıyor...";
+  status.className = "status";
+
+  ws = new WebSocket(
+    "wss://" + location.host + "/camera"
   );
 
-  const url = URL.createObjectURL(blob);
+  ws.binaryType = "arraybuffer";
 
-  img.onload = () => {
-    URL.revokeObjectURL(url);
+
+  ws.onopen = () => {
+
+    console.log("Viewer connected");
+
+    ws.send("VIEWER");
+
+    status.textContent = "🟢 CANLI";
+    status.className = "status online";
+
+    openBtn.disabled = true;
+    closeBtn.disabled = false;
+
   };
 
-  img.src = url;
-};
 
-ws.onclose = () => {
-  console.log("Viewer disconnected");
-};
+  ws.onmessage = (event) => {
+
+    if (typeof event.data === "string") {
+
+      console.log(event.data);
+
+      return;
+    }
+
+
+    const blob = new Blob(
+      [event.data],
+      {
+        type: "image/jpeg"
+      }
+    );
+
+
+    const url = URL.createObjectURL(blob);
+
+
+    img.onload = () => {
+
+      URL.revokeObjectURL(url);
+
+    };
+
+
+    img.src = url;
+
+  };
+
+
+  ws.onerror = () => {
+
+    status.textContent = "🔴 Kamera bağlantı hatası";
+    status.className = "status offline";
+
+  };
+
+
+  ws.onclose = () => {
+
+    console.log("Viewer disconnected");
+
+    status.textContent = "🔴 Kamera kapalı";
+    status.className = "status offline";
+
+    openBtn.disabled = false;
+    closeBtn.disabled = true;
+
+    img.removeAttribute("src");
+
+    ws = null;
+
+  };
+
+}
+
+
+function disconnectCamera() {
+
+  if (ws) {
+
+    ws.close();
+
+    ws = null;
+
+  }
+
+  img.removeAttribute("src");
+
+  status.textContent = "🔴 Kamera kapalı";
+  status.className = "status offline";
+
+  openBtn.disabled = false;
+  closeBtn.disabled = true;
+
+}
+
+
+openBtn.addEventListener(
+  "click",
+  connectCamera
+);
+
+
+closeBtn.addEventListener(
+  "click",
+  disconnectCamera
+);
+
+
+// Sayfa açıldığında kamerayı otomatik başlat
+connectCamera();
 
 </script>
 
@@ -986,9 +1167,6 @@ ws.onclose = () => {
 </html>
   `);
 });
-
-
-
 
 const port = process.env.PORT || 3000;
 
