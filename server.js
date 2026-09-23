@@ -1099,27 +1099,57 @@ function connectCamera() {
 
   };
 
-  ws.onmessage = (event) => {
+ let displayingFrame = false;
+let pendingFrame = null;
 
-    if (typeof event.data === "string") {
-      console.log(event.data);
-      return;
+ws.onmessage = (event) => {
+
+  if (typeof event.data === "string") {
+    console.log(event.data);
+    return;
+  }
+
+  // En yeni frame'i tut
+  pendingFrame = event.data;
+
+  if (!displayingFrame) {
+    showNextFrame();
+  }
+};
+
+function showNextFrame() {
+
+  if (!pendingFrame) {
+    displayingFrame = false;
+    return;
+  }
+
+  displayingFrame = true;
+
+  const frame = pendingFrame;
+  pendingFrame = null;
+
+  const blob = new Blob(
+    [frame],
+    { type: "image/jpeg" }
+  );
+
+  const url = URL.createObjectURL(blob);
+
+  img.onload = () => {
+
+    URL.revokeObjectURL(url);
+
+    displayingFrame = false;
+
+    // Kuyrukta yeni frame varsa sadece EN YENİSİNİ göster
+    if (pendingFrame) {
+      requestAnimationFrame(showNextFrame);
     }
-
-    const blob = new Blob(
-      [event.data],
-      { type: "image/jpeg" }
-    );
-
-    const url = URL.createObjectURL(blob);
-
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-    };
-
-    img.src = url;
   };
 
+  img.src = url;
+}
   ws.onerror = () => {
 
     status.textContent = "🔴 Kamera bağlantı hatası";
